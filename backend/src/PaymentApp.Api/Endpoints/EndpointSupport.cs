@@ -29,6 +29,22 @@ public static class Paging
         return new { @object = "list", data = items.Take(take), has_more = items.Count > take };
     }
 
+    /// <summary>Adds extra fields to each serialized row of a list page (opt-in via ?expand=…).</summary>
+    public static async Task<object> Expand(object page, Func<IEnumerable<Entity>, Task<Dictionary<string, object>>> extras)
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(Json.Serialize(page))!;
+        var rows = (IEnumerable<Entity>)page.GetType().GetProperty("data")!.GetValue(page)!;
+        var extra = await extras(rows.ToList());
+        foreach (var row in node["data"]!.AsArray())
+        {
+            var id = row!["id"]!.GetValue<string>();
+            if (!extra.TryGetValue(id, out var add)) continue;
+            foreach (var kv in System.Text.Json.Nodes.JsonNode.Parse(Json.Serialize(add))!.AsObject().ToList())
+                row[kv.Key] = kv.Value?.DeepClone();
+        }
+        return node;
+    }
+
     public static DateTime? Date(HttpRequest req, string key) =>
         DateTime.TryParse(req.Query[key], null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var d) ? d : null;
 }

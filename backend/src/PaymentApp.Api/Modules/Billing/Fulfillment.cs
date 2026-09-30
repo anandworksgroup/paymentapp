@@ -49,7 +49,7 @@ public class EntitlementService(AppDb db, Uow uow)
 
     public async Task RevokeBySource(string sourceId, string reason)
     {
-        foreach (var e in await db.Entitlements.Where(x => x.SourceId == sourceId && x.Status == "active").ToListAsync())
+        foreach (var e in await db.Entitlements.Where(x => x.SourceId == sourceId && (x.Status == "active" || x.Status == "suspended")).ToListAsync())
         {
             uow.Transition("entitlement", e.Id, e.Status, "revoked", reason: reason);
             e.Status = "revoked";
@@ -146,6 +146,7 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
             sub.Status = target;
             sub.DunningAttempts = 0;
             sub.NextRetryAt = null;
+            sub.PastDueSince = null;
             sub.UpdatedAt = uow.Now;
             uow.Emit(created ? "subscription.created" : "subscription.updated", sub);
             // Restore access that may have been restricted during dunning.
@@ -215,6 +216,7 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
         {
             uow.Transition("subscription", sub.Id, sub.Status, "PAST_DUE", reason: p.FailureCode);
             sub.Status = "PAST_DUE";
+            sub.PastDueSince = now;
             inv.Status = "PAST_DUE";
         }
         sub.DunningAttempts++;

@@ -253,6 +253,13 @@ public class MerchantService(AppDb db, Uow uow, ScreeningService screening, Fiel
             db.PayoutDestinations.Add(dest);
             db.SecurityEvents.Add(new SecurityEvent { Id = Ids.New("sev"), CreatedAt = uow.Now, UserId = uow.Ctx.User?.Id, OrgId = orgId, Type = "payout_account_changed", Ip = uow.Ctx.Ip, Detail = $"****{dest.Last4}" });
             uow.Audit("payout_destination.add", "payout_destination", dest.Id, after: new { dest.BankCountry, dest.Currency, dest.Last4 }, orgId: orgId);
+            // Security notice to the whole team: a changed payout account is a classic takeover step (§200).
+            db.Notifications.Add(new Notification
+            {
+                Id = Ids.New("ntf"), CreatedAt = uow.Now, OrgId = orgId, Channel = "in_app", Recipient = $"org:{orgId}", Template = "payout_account_changed",
+                Subject = $"Payout account changed to ****{dest.Last4}", Body = $"A {dest.Currency} payout account ending {dest.Last4} was added by {uow.Ctx.User?.Email ?? uow.Ctx.ActorId}. If this wasn't you, contact support.",
+                Category = "security", Status = "delivered", ObjectType = "payout_destination", ObjectId = dest.Id,
+            });
             await Task.CompletedTask;
             return dest;
         });

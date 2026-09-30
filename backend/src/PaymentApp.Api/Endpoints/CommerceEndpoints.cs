@@ -40,7 +40,7 @@ public static class CommerceEndpoints
         {
             ctx.RequireOrg("products.read");
             var q = db.Products.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } st) q = q.Where(p => p.Status == st);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } st) q = q.Where(p => p.Status == st);
             return await Paging.List(q, req);
         });
         v1.MapGet("/products/{id}", async (string id, RequestContext ctx, AppDb db) =>
@@ -83,6 +83,11 @@ public static class CommerceEndpoints
                 var before = new { p.Name, p.Status, p.TaxCategory };
                 p.Name = r.Name ?? p.Name; p.Description = r.Description ?? p.Description; p.ImageUrl = r.ImageUrl ?? p.ImageUrl;
                 p.TaxCategory = r.TaxCategory ?? p.TaxCategory; p.FeaturesCsv = r.Features ?? p.FeaturesCsv; p.Type = r.Type ?? p.Type;
+                p.DeliveryType = r.DeliveryType ?? p.DeliveryType;
+                // An empty string clears an optional field.
+                if (r.Description == "") p.Description = null;
+                if (r.ImageUrl == "") p.ImageUrl = null;
+                if (r.Features == "") p.FeaturesCsv = null;
                 if (r.Brand != null) p.BrandId = r.Brand == "" ? null : (await db.Brands.FirstOrDefaultAsync(b => b.Id == r.Brand) ?? throw ApiException.NotFound("brand")).Id;
                 if (r.Metadata != null) p.MetadataJson = Json.Serialize(r.Metadata);
                 if (r.Status != null)
@@ -102,9 +107,17 @@ public static class CommerceEndpoints
         {
             ctx.RequireOrg("products.read");
             var q = db.Prices.AsQueryable();
-            if (req.Query["product"].FirstOrDefault() is { } p) q = q.Where(x => x.ProductId == p);
-            if (req.Query["active"].FirstOrDefault() is { } a) q = q.Where(x => x.Active == (a == "true"));
-            return await Paging.List(q, req);
+            if (req.Query["product"].FirstOrDefault() is { Length: > 0 } p) q = q.Where(x => x.ProductId == p);
+            if (req.Query["active"].FirstOrDefault() is { Length: > 0 } a) q = q.Where(x => x.Active == (a == "true"));
+            var page = await Paging.List(q, req);
+            if (req.Query["expand"] != "summary") return page;
+            return await Paging.Expand(page, async rows =>
+            {
+                var prices = rows.Cast<Price>().ToList();
+                var productIds = prices.Select(p => p.ProductId).ToList();
+                var names = await db.Products.Where(x => productIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name);
+                return prices.ToDictionary(p => p.Id, p => (object)new { product_name = names.GetValueOrDefault(p.ProductId) });
+            });
         });
         v1.MapGet("/prices/{id}", async (string id, RequestContext ctx, AppDb db) =>
         {
@@ -170,7 +183,8 @@ public static class CommerceEndpoints
         {
             ctx.RequireOrg("products.read");
             var p = await db.Prices.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("price");
-            var quantities = (req.Query["quantities"].FirstOrDefault() ?? "1,10,100,1000,10000").Split(',').Select(long.Parse);
+            var raw = (req.Query["quantities"].FirstOrDefault() ?? "1,10,100,1000,10000").Split(',', StringSplitOptions.RemoveEmptyEntries);
+            var quantities = raw.Select(x => long.TryParse(x.Trim(), out var q) && q >= 0 ? q : throw ApiException.Invalid("quantities must be comma-separated non-negative integers.")).Take(20).ToList();
             return new { price = p.Id, currency = p.Currency, amounts = quantities.Select(q => new { quantity = q, amount = PricingEngine.Amount(p, q, req.Query["country"].FirstOrDefault()) }) };
         });
 
@@ -244,7 +258,11 @@ public static class CommerceEndpoints
         });
 
         // ───────── Meters (§28) ─────────
-        v1.MapGet("/meters", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("usage.read"); return await Paging.List(db.Meters, req); });
+        v1.MapGet("/meters", async (HttpRequest req, RequestContext ctx, AppDb db) =>
+        {
+            if (!ctx.Permissions.Contains("usage.read")) ctx.RequireOrg("products.read");
+            return await Paging.List(db.Meters, req);
+        });
         v1.MapPost("/meters", async (MeterRequest r, RequestContext ctx, AppDb db, Uow uow) =>
         {
             ctx.RequireOrg("products.write");
@@ -265,7 +283,7 @@ public static class CommerceEndpoints
         {
             ctx.RequireOrg("customers.read");
             var q = db.Customers.AsQueryable();
-            if (req.Query["email"].FirstOrDefault() is { } e) q = q.Where(c => c.Email == e.ToLowerInvariant());
+            if (req.Query["email"].FirstOrDefault() is { Length: > 0 } e) q = q.Where(c => c.Email == e.ToLowerInvariant());
             if (req.Query["search"].FirstOrDefault() is { Length: > 1 } s)
             {
                 var term = s.ToLowerInvariant();
@@ -372,13 +390,28 @@ public static class CommerceEndpoints
             return Results.Json(await checkout.Create(r.Mode, r.LineItems ?? [], r.Customer, r.CustomerEmail, r.Country, r.Coupon, r.SuccessUrl, r.CancelUrl, null,
                 r.Metadata == null ? null : Json.Serialize(r.Metadata), r.ClientReferenceId, r.Affiliate), statusCode: 201);
         });
-        co.MapGet("/checkout/sessions", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("payments.read"); return await Paging.List(db.CheckoutSessions, req); });
+        co.MapGet("/checkout/sessions", async (HttpRequest req, RequestContext ctx, AppDb db) =>
+        {
+            ctx.RequireOrg("payments.read");
+            var q = db.CheckoutSessions.AsQueryable();
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } st) q = q.Where(s => s.Status == st);
+            if (req.Query["customer"].FirstOrDefault() is { Length: > 0 } cu) q = q.Where(s => s.CustomerId == cu);
+            if (req.Query["payment_link"].FirstOrDefault() is { Length: > 0 } pl) q = q.Where(s => s.PaymentLinkId == pl);
+            return await Paging.List(q, req);
+        });
         co.MapGet("/checkout/sessions/{id}", async (string id, RequestContext ctx, AppDb db) =>
         {
             ctx.RequireOrg("payments.read");
             return await db.CheckoutSessions.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("checkout session");
         });
-        co.MapGet("/payment_links", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("payments.read"); return await Paging.List(db.PaymentLinks, req); });
+        co.MapGet("/payment_links", async (HttpRequest req, RequestContext ctx, AppDb db) =>
+        {
+            ctx.RequireOrg("payments.read");
+            var q = db.PaymentLinks.AsQueryable();
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } st) q = q.Where(l => l.Status == st);
+            if (req.Query["price"].FirstOrDefault() is { Length: > 0 } pr) q = q.Where(l => l.PriceId == pr);
+            return await Paging.List(q, req);
+        });
         co.MapPost("/payment_links", async (PaymentLinkRequest r, RequestContext ctx, AppDb db, Uow uow) =>
         {
             ctx.RequireOrg("checkout.write");
@@ -669,6 +702,7 @@ public static class CommerceEndpoints
             s.Subtotal, s.Discount, s.Tax, tax_label = s.TaxLabel, s.Total, s.TrialDays, recurring = s.RecurringSummary,
             coupon = coupon == null ? null : new { coupon.Code, coupon.Name },
             payment_methods = (caps?.PaymentMethodsCsv ?? "card").Split(','),
+            allow_coupons = s.PaymentLinkId == null || (await db.PaymentLinks.FirstOrDefaultAsync(l => l.Id == s.PaymentLinkId))?.AllowCoupons != false,
             terms = terms == null ? null : new { version = terms.Version, title = terms.Title },
             s.ExpiresAt, s.SuccessUrl, s.CancelUrl, s.PaymentId,
             test_mode_notice = s.Livemode ? null : "Test mode — use card 4242 4242 4242 4242 with any future date and CVC.",

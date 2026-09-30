@@ -29,7 +29,7 @@ public static class GrowthEndpoints
         {
             var orgId = ctx.RequireOrg("compliance.read");
             var q = db.Files.Where(f => f.OrgId == orgId && f.Livemode == ctx.Livemode);
-            if (req.Query["purpose"].FirstOrDefault() is { } p) q = q.Where(f => f.Purpose == p);
+            if (req.Query["purpose"].FirstOrDefault() is { Length: > 0 } p) q = q.Where(f => f.Purpose == p);
             return await Paging.List(q, req);
         });
         files.MapPost("/files/{id}/link", async (string id, RequestContext ctx, AppDb db, FileService store, Uow uow) =>
@@ -62,8 +62,8 @@ public static class GrowthEndpoints
         {
             ctx.RequireAdmin("admin.merchants.read");
             var q = db.Files.AsQueryable();
-            if (req.Query["org"].FirstOrDefault() is { } org) q = q.Where(f => f.OrgId == org);
-            if (req.Query["user"].FirstOrDefault() is { } user) q = q.Where(f => f.UserId == user);
+            if (req.Query["org"].FirstOrDefault() is { Length: > 0 } org) q = q.Where(f => f.OrgId == org);
+            if (req.Query["user"].FirstOrDefault() is { Length: > 0 } user) q = q.Where(f => f.UserId == user);
             return await Paging.List(q, req);
         }).WithTags("Admin");
 

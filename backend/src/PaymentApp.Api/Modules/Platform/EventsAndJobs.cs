@@ -84,6 +84,14 @@ public class WebhookSender(AppDb db, IHttpClientFactory http, FieldEncryptor enc
     public async Task Deliver(WebhookDelivery d)
     {
         var ep = await db.WebhookEndpoints.FirstAsync(x => x.Id == d.EndpointId);
+        if (ep.Status == "disabled")
+        {
+            d.Status = "dead";
+            d.ResponseBody = "Endpoint disabled; delivery cancelled.";
+            d.CompletedAt = clock.UtcNow;
+            await db.SaveChangesAsync();
+            return;
+        }
         var e = await db.Events.FirstAsync(x => x.Id == d.EventId);
         var payload = Payload(e);
         var ts = new DateTimeOffset(clock.UtcNow).ToUnixTimeSeconds();

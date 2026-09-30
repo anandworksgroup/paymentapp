@@ -1,0 +1,66 @@
+/** Minimal 20px line icons (1.6 stroke) so the shell stays light like the reference. */
+import type { SVGProps } from "react";
+
+const paths: Record<string, string> = {
+  home: "M3 10.5 10 4l7 6.5V17a1 1 0 0 1-1 1h-3.5v-5h-5v5H4a1 1 0 0 1-1-1v-6.5Z",
+  sales: "M3 5h14v10H3zM3 8.5h14M6.5 12.5h3",
+  card: "M2.5 5.5h15v9h-15zM2.5 8.5h15M5.5 12h3",
+  bag: "M4.5 7h11l-.8 10h-9.4L4.5 7ZM7.5 7V5.5a2.5 2.5 0 0 1 5 0V7",
+  link: "M8.5 11.5a3 3 0 0 0 4.2 0l2.6-2.6a3 3 0 0 0-4.2-4.2l-1 1M11.5 8.5a3 3 0 0 0-4.2 0l-2.6 2.6a3 3 0 0 0 4.2 4.2l1-1",
+  cart: "M3 4h2l1.6 8.5h8.2L16.5 7H6M8 16.5h.01M14 16.5h.01",
+  repeat: "M4 8a6 6 0 0 1 10.5-3.5L16 6M16 3v3h-3M16 12a6 6 0 0 1-10.5 3.5L4 14M4 17v-3h3",
+  invoice: "M5 2.5h7l3 3v12H5zM12 2.5v3h3M7.5 9h5M7.5 12h5M7.5 15h3",
+  gauge: "M3.5 13.5a6.5 6.5 0 1 1 13 0M10 13.5l3-4",
+  coins: "M10 4c3.3 0 6 1 6 2.5S13.3 9 10 9 4 8 4 6.5 6.7 4 10 4ZM4 6.5v3.5C4 11.5 6.7 12.5 10 12.5s6-1 6-2.5V6.5M4 10v3.5C4 15 6.7 16 10 16s6-1 6-2.5V10",
+  users: "M7.5 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 17c.5-3 2.8-5 5.5-5s5 2 5.5 5M13 3.5a3 3 0 0 1 0 5.5M15 12.2c1.6.6 2.7 2.4 3 4.8",
+  box: "M10 2.5 17 6v8l-7 3.5L3 14V6l7-3.5ZM3 6l7 3.5L17 6M10 9.5v8",
+  tag: "M3 3h6.5l7.5 7.5-6.5 6.5L3 9.5V3ZM6.5 6.5h.01",
+  wallet: "M3 6.5A1.5 1.5 0 0 1 4.5 5h11v3M3 6.5V15a1.5 1.5 0 0 0 1.5 1.5H17V8H4.5A1.5 1.5 0 0 1 3 6.5ZM13.5 12.3h.01",
+  bank: "M3 8 10 4l7 4M4.5 8.5v6M8 8.5v6M12 8.5v6M15.5 8.5v6M3 16.5h14",
+  book: "M4 3.5h9.5a2 2 0 0 1 2 2V17H6a2 2 0 0 1-2-2V3.5ZM4 15a2 2 0 0 1 2-2h9.5",
+  file: "M5 2.5h7l3 3v12H5zM12 2.5v3h3",
+  percent: "M15 5 5 15M6.5 8a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3ZM13.5 15a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z",
+  shield: "M10 2.5 16 5v5c0 3.6-2.6 6.4-6 7.5-3.4-1.1-6-3.9-6-7.5V5l6-2.5Z",
+  chart: "M3 17h14M5.5 14V9M9.5 14V5M13.5 14v-3",
+  code: "M7 6 3 10l4 4M13 6l4 4-4 4",
+  key: "M12.5 8.5a3.5 3.5 0 1 0-3.4 3.5L7.5 13.6V16H10v-1.5h1.5V13l.9-.9a3.5 3.5 0 0 0 .1-3.6ZM13 6.5h.01",
+  hook: "M7 4.5a3 3 0 1 1 3.5 3L8 12.2M13 16.5a3 3 0 1 1 .5-5.9M4 12.5a3 3 0 1 0 5.5 1.6h5",
+  bolt: "M11 2.5 4.5 11H10l-1 6.5L15.5 9H10l1-6.5Z",
+  list: "M7 5h10M7 10h10M7 15h10M3.5 5h.01M3.5 10h.01M3.5 15h.01",
+  settings: "M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM16.2 11.8l1.3 1-1.5 2.6-1.6-.5a6 6 0 0 1-1.6.9l-.3 1.7h-3l-.3-1.7a6 6 0 0 1-1.6-.9l-1.6.5-1.5-2.6 1.3-1a6 6 0 0 1 0-1.8l-1.3-1 1.5-2.6 1.6.5a6 6 0 0 1 1.6-.9l.3-1.7h3l.3 1.7a6 6 0 0 1 1.6.9l1.6-.5 1.5 2.6-1.3 1a6 6 0 0 1 0 1.8Z",
+  building: "M4 17V3.5h8V17M12 7.5h4V17M2.5 17h15M6.5 6.5h3M6.5 9.5h3M6.5 12.5h3",
+  team: "M7 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM2 17c.5-3 2.5-5 5-5s4.5 2 5 5M14.5 8.5l1.5 1.5 3-3",
+  check: "M4 10.5 8 14.5 16 5.5",
+  lock: "M5 9h10v8H5zM7 9V6.5a3 3 0 0 1 6 0V9",
+  rocket: "M11.5 3.5c2.5-.8 4.5-.5 5 0 .5.5.8 2.5 0 5L11 14l-5-5 5.5-5.5ZM6 9l-2.5.5L2.5 12l3 .5M11 14l-.5 2.5-2.5 1-.5-3M12.5 7.5h.01",
+  search: "M9 15a6 6 0 1 0 0-12 6 6 0 0 0 0 12ZM17 17l-3.5-3.5",
+  sparkle: "M10 2.5 11.8 8.2 17.5 10l-5.7 1.8L10 17.5l-1.8-5.7L2.5 10l5.7-1.8L10 2.5Z",
+  menu: "M3 5.5h14M3 10h14M3 14.5h14",
+  close: "M5 5l10 10M15 5 5 15",
+  chevron: "m7 8 3 3 3-3",
+  right: "m8 5 5 5-5 5",
+  left: "m12 5-5 5 5 5",
+  plus: "M10 4v12M4 10h12",
+  copy: "M7 7h9v10H7zM4 13V3h9",
+  external: "M11 3.5h5.5V9M16.5 3.5 9 11M14 12v4.5H3.5V6H8",
+  download: "M10 3v10M6 9.5l4 4 4-4M3.5 16.5h13",
+  logout: "M8 17H4.5V3H8M13 6.5 16.5 10 13 13.5M16.5 10H8",
+  info: "M10 17.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15ZM10 9v5M10 6.5h.01",
+  alert: "M10 3 18 16.5H2L10 3ZM10 8v4M10 14.5h.01",
+  clock: "M10 17.5a7.5 7.5 0 1 0 0-15 7.5 7.5 0 0 0 0 15ZM10 6v4.5l3 1.5",
+  refund: "M4 8h9a4 4 0 0 1 0 8H8M7 5 4 8l3 3",
+  scale: "M10 3v14M5 17h10M3 7l2-3h10l2 3M3 7l2 5 2-5M13 7l2 5 2-5M3 7h4M13 7h4",
+  send: "M17 3 3 9l6 2 2 6 6-14ZM9 11l3.5-3.5",
+  qr: "M3 3h5v5H3zM12 3h5v5h-5zM3 12h5v5H3zM12 12h2v2h-2zM15 15h2v2h-2zM15 12h2M12 15v2",
+};
+
+export type IconName = keyof typeof paths;
+
+export function Icon({ name, size = 18, ...rest }: { name: IconName | string; size?: number } & SVGProps<SVGSVGElement>) {
+  const d = paths[name] ?? paths.sparkle;
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden {...rest}>
+      <path d={d} />
+    </svg>
+  );
+}

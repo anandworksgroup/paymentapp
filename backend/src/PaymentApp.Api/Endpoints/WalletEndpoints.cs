@@ -10,6 +10,7 @@ public record FundRequest(string Currency, long Amount, string Source = "bank_tr
 public record FxQuoteRequest(string FromCurrency, string ToCurrency, long Amount);
 public record SendMoneyRequest(string Recipient, string SourceCurrency, long Amount, string? DestinationCurrency, string? QuoteId, string? Purpose, string? Note, string? SourceOfFunds);
 public record WithdrawRequest(string Currency, long Amount, string BankAccount, string? QuoteId);
+public record ExchangeRequest(string QuoteId);
 public record BankAccountRequest(string Country, string Currency, string BankName, string AccountHolder, string AccountNumber, string? Routing);
 
 public static class WalletEndpoints
@@ -52,8 +53,16 @@ public static class WalletEndpoints
         {
             var user = ctx.RequireUser();
             var wallet = await wallets.ForUser(user, create: false) ?? throw ApiException.NotFound("wallet");
-            var list = await db.Transfers.Where(t => t.SenderWalletId == wallet.Id || t.RecipientWalletId == wallet.Id).OrderByDescending(t => t.CreatedAt)
-                .Take(Math.Clamp(int.TryParse(req.Query["limit"], out var n) ? n : 50, 1, 200)).ToListAsync();
+            var take = Math.Clamp(int.TryParse(req.Query["limit"], out var n) ? n : 50, 1, 200);
+            var q = db.Transfers.Where(t => t.SenderWalletId == wallet.Id || t.RecipientWalletId == wallet.Id);
+            if (req.Query["starting_after"].FirstOrDefault() is { Length: > 0 } after)
+            {
+                var anchor = await q.FirstOrDefaultAsync(t => t.Id == after) ?? throw ApiException.Invalid("starting_after refers to an unknown transfer.");
+                q = q.Where(t => t.CreatedAt < anchor.CreatedAt || (t.CreatedAt == anchor.CreatedAt && t.Id.CompareTo(anchor.Id) < 0));
+            }
+            if (req.Query["type"].FirstOrDefault() is { Length: > 0 } type) q = q.Where(t => t.Type == type);
+            var page = await q.OrderByDescending(t => t.CreatedAt).ThenByDescending(t => t.Id).Take(take + 1).ToListAsync();
+            var list = page.Take(take).ToList();
             var counterpartIds = list.SelectMany(t => new[] { t.SenderWalletId, t.RecipientWalletId }).Where(x => x != null && x != wallet.Id).Distinct().ToList();
             var handles = await db.Wallets.Where(x => counterpartIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Handle);
             var banks = await db.BankAccounts.Where(b => list.Select(t => t.BankAccountId).Contains(b.Id)).ToDictionaryAsync(b => b.Id);
@@ -68,6 +77,7 @@ public static class WalletEndpoints
                         "funding" => t.FundingSource == "card" ? "Card top-up" : "Bank transfer",
                         "withdrawal" => banks.TryGetValue(t.BankAccountId!, out var b) ? $"{b.BankName} ****{b.Last4}" : "Bank",
                         "merchant_proceeds" => "Merchant proceeds",
+                        "conversion" => $"Exchange {t.SourceCurrency} → {t.DestinationCurrency}",
                         _ => handles.GetValueOrDefault((outgoing ? t.RecipientWalletId : t.SenderWalletId) ?? "", "wallet"),
                     };
                     return new
@@ -78,6 +88,7 @@ public static class WalletEndpoints
                         message = t.CustomerMessage, t.Note, t.Purpose, t.CreatedAt, t.CompletedAt,
                     };
                 }),
+                has_more = page.Count > take,
             };
         });
         w.MapGet("/transfers/{id}", async (string id, RequestContext ctx, WalletService wallets, AppDb db) =>
@@ -85,8 +96,22 @@ public static class WalletEndpoints
             var user = ctx.RequireUser();
             var wallet = await wallets.ForUser(user, create: false) ?? throw ApiException.NotFound("wallet");
             var t = await db.Transfers.FirstOrDefaultAsync(x => x.Id == id && (x.SenderWalletId == wallet.Id || x.RecipientWalletId == wallet.Id)) ?? throw ApiException.NotFound("transfer");
-            return View(t, wallet.Id);
+            var outgoing = t.SenderWalletId == wallet.Id;
+            string counterparty = t.Type switch
+            {
+                "funding" => t.FundingSource == "card" ? "Card top-up" : "Bank transfer",
+                "withdrawal" => await db.BankAccounts.Where(b => b.Id == t.BankAccountId).Select(b => b.BankName + " ****" + b.Last4).FirstOrDefaultAsync() ?? "Bank",
+                "merchant_proceeds" => "Merchant proceeds",
+                "conversion" => $"Exchange {t.SourceCurrency} → {t.DestinationCurrency}",
+                _ => await db.Wallets.Where(x => x.Id == (outgoing ? t.RecipientWalletId : t.SenderWalletId)).Select(x => x.Handle).FirstOrDefaultAsync() ?? "wallet",
+            };
+            return View(t, wallet.Id, counterparty);
         });
+        w.MapPost("/exchanges", async (ExchangeRequest r, RequestContext ctx, WalletService wallets) =>
+        {
+            var t = await wallets.Exchange(ctx.RequireUser(), r.QuoteId);
+            return Results.Json(View(t, t.SenderWalletId!, $"Exchange {t.SourceCurrency} → {t.DestinationCurrency}"), statusCode: 201);
+        }).RequireRateLimiting("financial");
         w.MapGet("/bank_accounts", async (RequestContext ctx, AppDb db) =>
         {
             var user = ctx.RequireUser();
@@ -108,11 +133,34 @@ public static class WalletEndpoints
             });
             return Results.NoContent();
         });
-        w.MapGet("/limits", async (RequestContext ctx, AppDb db) =>
+        w.MapGet("/limits", async (RequestContext ctx, AppDb db, IConfiguration config) =>
         {
             var user = ctx.RequireUser();
             var limits = await db.WalletLimits.Where(l => (l.Country == user.Country || l.Country == "*")).OrderBy(l => l.KycLevel).ToListAsync();
-            return new { @object = "wallet_limits", kyc_level = user.KycLevel, currency = "USD", limits };
+            var current = limits.Where(l => l.KycLevel <= user.KycLevel).OrderByDescending(l => l.KycLevel).FirstOrDefault();
+            var wallet = await db.Wallets.FirstOrDefaultAsync(x => x.OwnerType == "user" && x.OwnerId == user.Id);
+            var month = DateTime.UtcNow.AddDays(-30);
+            var day = DateTime.UtcNow.AddDays(-1);
+            var sent = wallet == null ? [] : await db.Transfers.Where(t => t.SenderWalletId == wallet.Id && t.CreatedAt >= month && t.Status != "FAILED" && t.Status != "CANCELLED" && t.Status != "RETURNED").ToListAsync();
+            var funded = wallet == null ? [] : await db.Transfers.Where(t => t.RecipientWalletId == wallet.Id && t.Type == "funding" && t.CreatedAt >= month && t.Status != "CANCELLED").ToListAsync();
+            object Usage(IEnumerable<Transfer> rows, Func<Transfer, long> usd) => new
+            {
+                last_24h_usd = rows.Where(t => t.CreatedAt >= day).Sum(usd), last_30d_usd = rows.Sum(usd),
+                remaining_24h_usd = current == null ? 0 : Math.Max(0, current.DailyUsd - rows.Where(t => t.CreatedAt >= day).Sum(usd)),
+                remaining_30d_usd = current == null ? 0 : Math.Max(0, current.MonthlyUsd - rows.Sum(usd)),
+            };
+            return new
+            {
+                @object = "wallet_limits", kyc_level = user.KycLevel, currency = "USD", limits, current,
+                usage = new
+                {
+                    internal_transfers = Usage(sent.Where(t => t.Type == "internal"), t => PaymentApp.Api.Modules.Payments.FxTable.ToUsd(t.SourceAmount, t.SourceCurrency)),
+                    withdrawals = Usage(sent.Where(t => t.Type == "withdrawal"), t => PaymentApp.Api.Modules.Payments.FxTable.ToUsd(t.SourceAmount, t.SourceCurrency)),
+                    conversions = Usage(sent.Where(t => t.Type == "conversion"), t => PaymentApp.Api.Modules.Payments.FxTable.ToUsd(t.SourceAmount, t.SourceCurrency)),
+                    funding = Usage(funded, t => PaymentApp.Api.Modules.Payments.FxTable.ToUsd(t.DestinationAmount, t.DestinationCurrency)),
+                },
+                fees = new { cross_currency_bps = config.GetValue("Wallet:CrossCurrencyFeeBps", 30), fx_spread_bps = config.GetValue("Wallet:FxSpreadBps", 50), withdrawal_bps = config.GetValue("Wallet:WithdrawalFeeBps", 0) },
+            };
         });
 
         // Business wallet for merchant proceeds (§118).
@@ -131,10 +179,10 @@ public static class WalletEndpoints
     }
 
     /// <summary>The customer's view (§224): amounts, FX, fees, neutral status message — never internal reasons.</summary>
-    private static object View(Transfer t, string walletId) => new
+    private static object View(Transfer t, string walletId, string? counterparty = null) => new
     {
-        t.Id, @object = "transfer", t.Type, t.Status, direction = t.SenderWalletId == walletId ? "out" : "in",
-        t.SourceAmount, t.SourceCurrency, t.DestinationAmount, t.DestinationCurrency, t.FeeAmount,
-        fx_rate = t.FxRateE9 == null ? (double?)null : t.FxRateE9.Value / 1e9, t.FxRateTimestamp, message = t.CustomerMessage, t.CreatedAt, t.CompletedAt,
+        t.Id, @object = "transfer", t.Type, t.Status, direction = t.SenderWalletId == walletId ? "out" : "in", counterparty,
+        t.SourceAmount, t.SourceCurrency, t.DestinationAmount, t.DestinationCurrency, t.FeeAmount, spread_amount = t.FxSpreadAmount,
+        fx_rate = t.FxRateE9 == null ? (double?)null : t.FxRateE9.Value / 1e9, t.FxRateTimestamp, message = t.CustomerMessage, t.Purpose, t.Note, t.CreatedAt, t.CompletedAt,
     };
 }

@@ -327,6 +327,26 @@ public class BillingService(AppDb db, Uow uow, PaymentService payments, Fulfillm
             await Renew(snapshot.Id);
             processed++;
         }
+        // Dunning grace (§27): access continues while past due, then is suspended until the invoice is paid.
+        List<Subscription> overdue;
+        using (db.Tenant.Elevate())
+            overdue = await db.Subscriptions.AsNoTracking().Where(s => s.TestClockId == testClockId && s.Status == "PAST_DUE" && s.PastDueSince != null).ToListAsync();
+        foreach (var snapshot in overdue)
+        {
+            using var _ = db.Tenant.Use(snapshot.OrgId, snapshot.Livemode);
+            var org = await db.Organizations.FirstAsync(o => o.Id == snapshot.OrgId);
+            if (snapshot.PastDueSince!.Value.AddDays(org.DunningGraceDays) > now) continue;
+            await uow.Run(async () =>
+            {
+                foreach (var e in await db.Entitlements.Where(x => x.SourceId == snapshot.Id && x.Status == "active").ToListAsync())
+                {
+                    uow.Transition("entitlement", e.Id, "active", "suspended", reason: "grace period ended");
+                    e.Status = "suspended";
+                    e.RevokeReason = "Payment past due (grace period ended)";
+                    uow.Emit("entitlement.suspended", e);
+                }
+            });
+        }
         List<Subscription> retries;
         using (db.Tenant.Elevate())
             retries = await db.Subscriptions.AsNoTracking()
@@ -485,7 +505,7 @@ public class BillingService(AppDb db, Uow uow, PaymentService payments, Fulfillm
             }
             await entitlements.Grant(customer.Id, newPrice.ProductId, "subscription", sub.Id, quantity);
             uow.Emit("subscription.updated", sub);
-            uow.Audit("subscription.change_plan", "subscription", sub.Id, new { oldPrice = oldPrice.Id, oldQty = summary.from_price }, new { newPrice = newPrice.Id, quantity, net });
+            uow.Audit("subscription.change_plan", "subscription", sub.Id, new { oldPrice = oldPrice.Id, oldQuantity = oldItem.Quantity }, new { newPrice = newPrice.Id, quantity, net });
             return inv;
         });
         if (invoiceToCharge != null && sub.CollectionMethod == "charge_automatically") await ChargeInvoice(invoiceToCharge, offSession: true);
@@ -542,6 +562,8 @@ public class BillingService(AppDb db, Uow uow, PaymentService payments, Fulfillm
                 sub.PausedAt = null;
                 sub.CurrentPeriodStart = now;
                 sub.CurrentPeriodEnd = now; // renewal job bills the new period immediately
+                // Resuming is an explicit choice to continue, so it clears a pending cancellation.
+                if (sub.CancelAtPeriodEnd) { sub.CancelAtPeriodEnd = false; uow.Audit("subscription.cancel_cleared_on_resume", "subscription", sub.Id); }
                 _ = price;
             }
             sub.UpdatedAt = uow.Now;
@@ -616,6 +638,8 @@ public class BillingService(AppDb db, Uow uow, PaymentService payments, Fulfillm
         {
             var inv = await db.Invoices.FirstOrDefaultAsync(i => i.Id == id) ?? throw ApiException.NotFound("invoice");
             if (inv.Status != "DRAFT") throw ApiException.Conflict("invalid_state", "Only draft invoices can be finalized.");
+            // Payment terms run from finalization, not from when the draft was started.
+            if (inv.DueDate is { } due) inv.DueDate = uow.Now + (due - inv.CreatedAt);
             Finalize(inv);
             return inv;
         });

@@ -20,7 +20,7 @@ public record ApprovalDecisionRequest(bool Approve, string? Note);
 public record AlertConclusionRequest(string Conclusion, string Note);
 public record AssignRequest(string? AssignedTo);
 public record ProviderUpdateRequest(bool? Enabled, int? Priority, bool? ForceOutage, int? FeeBps);
-public record FeeRequest(string? OrgId, string? Country, string? Method, int PercentBps, long FixedMinor, string FixedCurrency, long? MinimumMinor, long? MaximumMinor, int InternationalBps);
+public record FeeRequest(string? OrgId, string? Country, string? Method, int PercentBps, long FixedMinor, string FixedCurrency, long? MinimumMinor, long? MaximumMinor, int InternationalBps, int? Priority = null);
 public record TaxRuleRequest(string Country, string? TaxCategory, string? CustomerType, string TaxType, int RateBps, bool ReverseChargeB2B, string Label, DateTime? EffectiveFrom);
 public record RuleUpdateRequest(bool? Enabled, string? Severity, string? Action, Dictionary<string, long>? Params);
 public record CountryRequest(bool? CheckoutEnabled, bool? WalletEnabled, bool? PayoutsEnabled, bool? MerchantOnboardingEnabled, string? PaymentMethodsCsv, int? WalletKycLevelRequired);
@@ -56,10 +56,10 @@ public static class AdminEndpoints
                 cross_border_volume_usd = transfers.Where(t => t.SenderCountry != null && t.RecipientCountry != null && t.SenderCountry != t.RecipientCountry).Sum(t => FxTable.ToUsd(t.SourceAmount, t.SourceCurrency)),
                 failed_transactions = payments.Count(p => p.Status == "FAILED") + transfers.Count(t => t.Status == "FAILED"),
                 payment_success_rate = payments.Count == 0 ? 100 : Math.Round(payments.Count(p => p.AmountCaptured > 0) * 100.0 / payments.Count, 1),
-                aml_alerts_open = await db.Alerts.CountAsync(x => x.Type == "aml" && (x.Status == "NEW" || x.Status == "IN_REVIEW" || x.Status == "QUEUED")),
-                sanctions_alerts_open = await db.Alerts.CountAsync(x => (x.Type == "sanctions" || x.Type == "pep") && (x.Status == "NEW" || x.Status == "IN_REVIEW")),
-                open_cases = await db.Cases.CountAsync(c => c.Status != "CLOSED"),
-                high_priority_cases = await db.Cases.CountAsync(c => c.Status != "CLOSED" && (c.Priority == "HIGH" || c.Priority == "CRITICAL")),
+                aml_alerts_open = !ctx.AdminPermissions.Contains("admin.aml.read") ? (int?)null : await db.Alerts.CountAsync(x => x.Type == "aml" && (x.Status == "NEW" || x.Status == "IN_REVIEW" || x.Status == "QUEUED")),
+                sanctions_alerts_open = !ctx.AdminPermissions.Contains("admin.aml.read") ? (int?)null : await db.Alerts.CountAsync(x => (x.Type == "sanctions" || x.Type == "pep") && (x.Status == "NEW" || x.Status == "IN_REVIEW")),
+                open_cases = !ctx.AdminPermissions.Contains("admin.aml.read") ? (int?)null : await db.Cases.CountAsync(c => c.Status != "CLOSED"),
+                high_priority_cases = !ctx.AdminPermissions.Contains("admin.aml.read") ? (int?)null : await db.Cases.CountAsync(c => c.Status != "CLOSED" && (c.Priority == "HIGH" || c.Priority == "CRITICAL")),
                 pending_kyc = await db.Users.CountAsync(u => u.KycStatus == "REVIEW"),
                 pending_kyb = await db.Organizations.CountAsync(o => o.Status == "UNDER_REVIEW"),
                 transfers_on_hold = await db.Transfers.CountAsync(t => t.Status == "HELD"),
@@ -100,7 +100,7 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.merchants.read");
             var q = db.Organizations.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(o => o.Status == s);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(o => o.Status == s);
             return await Paging.List(q, req);
         });
         a.MapGet("/merchants/{id}", async (string id, RequestContext ctx, AppDb db, TreasuryService treasury) =>
@@ -113,7 +113,8 @@ public static class AdminEndpoints
             {
                 organization = org,
                 application = await db.MerchantApplications.FirstOrDefaultAsync(x => x.OrgId == id),
-                beneficial_owners = await db.BeneficialOwners.Where(b => b.OrgId == id).ToListAsync(),
+                beneficial_owners = (await db.BeneficialOwners.Where(b => b.OrgId == id).ToListAsync())
+                    .Select(b => new { b.Id, b.Name, date_of_birth = ctx.AdminPermissions.Contains("admin.pii.unmask") ? b.DateOfBirth : b.DateOfBirth?[..4], b.Nationality, b.Country, b.OwnershipBps, b.Relationship, b.VerificationStatus, b.ScreeningStatus }),
                 members = await db.Memberships.Where(m => m.OrgId == id).Join(db.Users, m => m.UserId, u => u.Id, (m, u) => new { m.Role, u.Id, u.Name, email = Mask.Email(u.Email) }).ToListAsync(),
                 balance_test = await treasury.Balance(id, false),
                 balance_live = await treasury.Balance(id, true),
@@ -135,10 +136,19 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.users.read");
             var q = db.Users.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(u => u.Status == s);
-            if (req.Query["kyc_status"].FirstOrDefault() is { } k) q = q.Where(u => u.KycStatus == k);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(u => u.Status == s);
+            if (req.Query["kyc_status"].FirstOrDefault() is { Length: > 0 } k) q = q.Where(u => u.KycStatus == k);
             var page = await Paging.List(q, req);
-            return page;
+            // Lists never carry raw PII; the detail view unmasks (and is logged) when permitted (§137).
+            var node = System.Text.Json.Nodes.JsonNode.Parse(Json.Serialize(page))!;
+            foreach (var row in node["data"]!.AsArray())
+            {
+                row!["email"] = Mask.Email(row["email"]?.GetValue<string>());
+                row["phone"] = Mask.Tail(row["phone"]?.GetValue<string>());
+                row["date_of_birth"] = row["date_of_birth"]?.GetValue<string>() is { Length: >= 4 } dob ? dob[..4] + "-**-**" : null;
+                row["address"] = row["address"] == null ? null : "••••";
+            }
+            return (object)node;
         });
         a.MapGet("/users/{id}", async (string id, HttpRequest req, RequestContext ctx, AppDb db) =>
         {
@@ -195,8 +205,11 @@ public static class AdminEndpoints
             if (wallet != null)
                 foreach (var t in await db.Transfers.Where(t => t.SenderWalletId == wallet.Id || t.RecipientWalletId == wallet.Id).ToListAsync())
                     items.Add((t.CreatedAt, "money", $"{t.Type} {(t.SenderWalletId == wallet.Id ? "out" : "in")} {Money.Format(t.SenderWalletId == wallet.Id ? t.SourceAmount : t.DestinationAmount, t.SenderWalletId == wallet.Id ? t.SourceCurrency : t.DestinationCurrency)} — {t.Status}", t.Id));
-            foreach (var al in await db.Alerts.Where(x => x.SubjectId == id).ToListAsync()) items.Add((al.CreatedAt, "alert", $"Alert: {al.Summary} ({al.Severity})", al.Id));
-            foreach (var c in await db.Cases.Where(x => x.SubjectId == id).ToListAsync()) items.Add((c.CreatedAt, "case", $"Case opened: {c.Title}", c.Id));
+            if (ctx.AdminPermissions.Contains("admin.aml.read"))
+            {
+                foreach (var al in await db.Alerts.Where(x => x.SubjectId == id).ToListAsync()) items.Add((al.CreatedAt, "alert", $"Alert: {al.Summary} ({al.Severity})", al.Id));
+                foreach (var c in await db.Cases.Where(x => x.SubjectId == id).ToListAsync()) items.Add((c.CreatedAt, "case", $"Case opened: {c.Title}", c.Id));
+            }
             foreach (var au in await db.AuditLogs.Where(x => x.ObjectId == id).ToListAsync()) items.Add((au.At, "admin", $"{au.Action} by {au.ActorId}{(au.Reason != null ? $": {au.Reason}" : "")}", au.Id));
             return new { @object = "timeline", data = items.OrderBy(i => i.At).Select(i => new { at = i.At, kind = i.Kind, text = i.Text, @ref = i.Ref }) };
         });
@@ -234,13 +247,21 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.transactions.read");
             var q = db.Transfers.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(t => t.Status == s);
-            if (req.Query["type"].FirstOrDefault() is { } ty) q = q.Where(t => t.Type == ty);
-            if (req.Query["wallet"].FirstOrDefault() is { } w) q = q.Where(t => t.SenderWalletId == w || t.RecipientWalletId == w);
-            if (req.Query["from_country"].FirstOrDefault() is { } fc) q = q.Where(t => t.SenderCountry == fc);
-            if (req.Query["to_country"].FirstOrDefault() is { } tc) q = q.Where(t => t.RecipientCountry == tc);
-            if (req.Query["bank_account"].FirstOrDefault() is { } ba) q = q.Where(t => t.BankAccountId == ba);
-            return await Paging.List(q, req);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(t => t.Status == s);
+            if (req.Query["type"].FirstOrDefault() is { Length: > 0 } ty) q = q.Where(t => t.Type == ty);
+            if (req.Query["wallet"].FirstOrDefault() is { Length: > 0 } w) q = q.Where(t => t.SenderWalletId == w || t.RecipientWalletId == w);
+            if (req.Query["from_country"].FirstOrDefault() is { Length: > 0 } fc) q = q.Where(t => t.SenderCountry == fc);
+            if (req.Query["to_country"].FirstOrDefault() is { Length: > 0 } tc) q = q.Where(t => t.RecipientCountry == tc);
+            if (req.Query["bank_account"].FirstOrDefault() is { Length: > 0 } ba) q = q.Where(t => t.BankAccountId == ba);
+            var page = await Paging.List(q, req);
+            return await Paging.Expand(page, async rows =>
+            {
+                var transfers = rows.Cast<Transfer>().ToList();
+                var walletIds = transfers.SelectMany(t => new[] { t.SenderWalletId, t.RecipientWalletId }).Where(x => x != null).Distinct().ToList();
+                var wallets = await db.Wallets.Where(w => walletIds.Contains(w.Id)).ToDictionaryAsync(w => w.Id);
+                object? Party(string? walletId) => walletId != null && wallets.TryGetValue(walletId, out var w) ? new { wallet = w.Id, w.Handle, owner_type = w.OwnerType, owner_id = w.OwnerId } : null;
+                return transfers.ToDictionary(t => t.Id, t => (object)new { sender = Party(t.SenderWalletId), recipient = Party(t.RecipientWalletId) });
+            });
         });
         a.MapGet("/transfers/{id}", async (string id, RequestContext ctx, AppDb db) =>
         {
@@ -257,7 +278,8 @@ public static class AdminEndpoints
                 recipient = t.RecipientWalletId == null ? null : await db.Wallets.FirstOrDefaultAsync(w => w.Id == t.RecipientWalletId),
                 bank_account = t.BankAccountId == null ? null : await db.BankAccounts.FirstOrDefaultAsync(b => b.Id == t.BankAccountId),
                 fx_quote = t.FxQuoteId == null ? null : await db.FxQuotes.FirstOrDefaultAsync(q => q.Id == t.FxQuoteId),
-                screening = await db.ScreeningChecks.Where(s => s.SubjectId == t.RecipientWalletId || s.AlertId != null && db.Alerts.Any(al => al.Id == s.AlertId && al.TransferId == id)).ToListAsync(),
+                screening = await db.ScreeningChecks.Where(s => (t.RecipientWalletId != null && s.SubjectId == db.Wallets.Where(w => w.Id == t.RecipientWalletId).Select(w => w.OwnerId).FirstOrDefault())
+                                                                || (s.AlertId != null && db.Alerts.Any(al => al.Id == s.AlertId && al.TransferId == id))).OrderByDescending(s => s.CreatedAt).Take(20).ToListAsync(),
                 alerts = await db.Alerts.Where(x => x.TransferId == id).ToListAsync(),
                 ledger = related.Select(l => new { l.Id, l.Type, l.CreatedAt, entries = entries.Where(e => e.TransactionId == l.Id).Select(e => new { account = accounts[e.AccountId].Code, owner = accounts[e.AccountId].OwnerId, e.Direction, e.Amount, e.Currency }) }),
                 lineage = new { parent = t.ParentTransferId, ledger_transaction = ltx?.Id },
@@ -273,8 +295,8 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.transactions.read");
             var q = db.Payments.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(p => p.Status == s);
-            if (req.Query["org"].FirstOrDefault() is { } o) q = q.Where(p => p.OrgId == o);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(p => p.Status == s);
+            if (req.Query["org"].FirstOrDefault() is { Length: > 0 } o) q = q.Where(p => p.OrgId == o);
             return await Paging.List(q, req);
         });
 
@@ -283,9 +305,9 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.aml.read");
             var q = db.Alerts.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = s == "open" ? q.Where(x => x.Status == "NEW" || x.Status == "QUEUED" || x.Status == "IN_REVIEW" || x.Status == "ESCALATED") : q.Where(x => x.Status == s);
-            if (req.Query["type"].FirstOrDefault() is { } t) q = q.Where(x => x.Type == t);
-            if (req.Query["severity"].FirstOrDefault() is { } sv) q = q.Where(x => x.Severity == sv);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = s == "open" ? q.Where(x => x.Status == "NEW" || x.Status == "QUEUED" || x.Status == "IN_REVIEW" || x.Status == "ESCALATED") : q.Where(x => x.Status == s);
+            if (req.Query["type"].FirstOrDefault() is { Length: > 0 } t) q = q.Where(x => x.Type == t);
+            if (req.Query["severity"].FirstOrDefault() is { Length: > 0 } sv) q = q.Where(x => x.Severity == sv);
             return await Paging.List(q, req);
         });
         a.MapGet("/alerts/{id}", async (string id, RequestContext ctx, AppDb db) =>
@@ -297,7 +319,9 @@ public static class AdminEndpoints
             {
                 alert = al, rule, transfer = al.TransferId == null ? null : await db.Transfers.FirstOrDefaultAsync(t => t.Id == al.TransferId),
                 screening = await db.ScreeningChecks.Where(s => s.AlertId == id).ToListAsync(),
-                subject = al.SubjectType == "user" ? (object?)await db.Users.Where(u => u.Id == al.SubjectId).Select(u => new { u.Id, u.Name, u.Country, u.KycLevel, u.Status, u.DateOfBirth }).FirstOrDefaultAsync() : await db.Organizations.FirstOrDefaultAsync(o => o.Id == al.SubjectId),
+                subject = al.SubjectType == "user"
+                    ? (object?)(await db.Users.Where(u => u.Id == al.SubjectId).ToListAsync()).Select(u => new { u.Id, u.Name, u.Country, u.KycLevel, u.Status, date_of_birth = ctx.AdminPermissions.Contains("admin.pii.unmask") ? u.DateOfBirth : u.DateOfBirth?[..4] }).FirstOrDefault()
+                    : await db.Organizations.FirstOrDefaultAsync(o => o.Id == al.SubjectId),
             };
         });
         a.MapPost("/alerts/{id}/assign", async (string id, AssignRequest r, RequestContext ctx, AppDb db, Uow uow) =>
@@ -339,8 +363,8 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.aml.read");
             var q = db.Cases.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = s == "open" ? q.Where(c => c.Status != "CLOSED") : q.Where(c => c.Status == s);
-            if (req.Query["assigned_to"].FirstOrDefault() is { } asg) q = q.Where(c => c.AssignedTo == asg);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = s == "open" ? q.Where(c => c.Status != "CLOSED") : q.Where(c => c.Status == s);
+            if (req.Query["assigned_to"].FirstOrDefault() is { Length: > 0 } asg) q = q.Where(c => c.AssignedTo == asg);
             return await Paging.List(q, req);
         });
         a.MapPost("/cases", async (CaseRequest r, RequestContext ctx, ComplianceService compliance) =>
@@ -390,7 +414,6 @@ public static class AdminEndpoints
         a.MapPost("/cases/{id}/decision", async (string id, CaseDecisionRequest r, RequestContext ctx, ComplianceService compliance) =>
         {
             ctx.RequireAdmin("admin.aml.write");
-            if (r.Decision is "FALSE_POSITIVE" or "NO_FURTHER_ACTION" or "CONTINUE_MONITORING") ctx.RequireAdmin("admin.aml.write");
             return await compliance.Decide(id, r.Decision, r.Reason);
         });
         a.MapGet("/cases/{id}/report", async (string id, RequestContext ctx, ComplianceService compliance, Uow uow) =>
@@ -405,8 +428,10 @@ public static class AdminEndpoints
         a.MapGet("/approvals", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {
             ctx.RequireAdmin("admin.overview");
+            if (!new[] { "admin.approve", "admin.aml.read", "admin.audit.read", "admin.ledger.adjust", "admin.payouts.hold" }.Any(ctx.AdminPermissions.Contains))
+                throw ApiException.Forbidden("Your role can't view approval requests.");
             var q = db.Approvals.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(x => x.Status == s);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(x => x.Status == s);
             return await Paging.List(q, req);
         });
         a.MapPost("/approvals", async (ApprovalCreateRequest r, RequestContext ctx, ComplianceService compliance) =>
@@ -454,10 +479,10 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.aml.read");
             var q = db.ScreeningChecks.AsQueryable();
-            if (req.Query["result"].FirstOrDefault() is { } r) q = q.Where(c => c.Result == r);
+            if (req.Query["result"].FirstOrDefault() is { Length: > 0 } r) q = q.Where(c => c.Result == r);
             return await Paging.List(q, req);
         });
-        a.MapPost("/screening/rescreen", async (RequestContext ctx, AppDb db, ScreeningService screening) =>
+        a.MapPost("/screening/rescreen", async (RequestContext ctx, AppDb db, ScreeningService screening, Uow uow) =>
         {
             // Periodic / list-update rescreening of verified users and beneficial owners (§167).
             ctx.RequireAdmin("admin.aml.write");
@@ -466,6 +491,7 @@ public static class AdminEndpoints
             var hits = 0;
             foreach (var u in users) if ((await screening.Screen("user", u.Id, u.Name, u.DateOfBirth, u.Country, "periodic_rescreen")).Result != "clear") hits++;
             foreach (var o in owners) if ((await screening.Screen("beneficial_owner", o.Id, o.Name, o.DateOfBirth, o.Nationality, "periodic_rescreen")).Result != "clear") hits++;
+            await uow.Run(async () => { uow.Audit("screening.rescreen", "screening_list", null, after: new { screened = users.Count + owners.Count, potential_matches = hits }); await Task.CompletedTask; });
             return new { screened = users.Count + owners.Count, potential_matches = hits };
         });
 
@@ -480,8 +506,8 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.ledger.read");
             var q = db.LedgerAccounts.AsQueryable();
-            if (req.Query["owner_type"].FirstOrDefault() is { } ot) q = q.Where(x => x.OwnerType == ot);
-            if (req.Query["owner"].FirstOrDefault() is { } o) q = q.Where(x => x.OwnerId == o);
+            if (req.Query["owner_type"].FirstOrDefault() is { Length: > 0 } ot) q = q.Where(x => x.OwnerType == ot);
+            if (req.Query["owner"].FirstOrDefault() is { Length: > 0 } o) q = q.Where(x => x.OwnerId == o);
             var accounts = await q.OrderBy(x => x.OwnerType).ThenBy(x => x.Code).Take(500).ToListAsync();
             var list = new List<object>();
             foreach (var acct in accounts) list.Add(new { acct.Id, acct.OwnerType, acct.OwnerId, acct.Code, acct.Currency, acct.Livemode, acct.Kind, balance = await ledger.Balance(acct) });
@@ -506,7 +532,7 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.recon.read");
             var q = db.ReconExceptions.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(e => e.Status == s);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(e => e.Status == s);
             return await Paging.List(q, req);
         });
         a.MapPost("/reconciliation/exceptions/{id}/resolve", async (string id, ReconResolveRequest r, RequestContext ctx, AppDb db, Uow uow) =>
@@ -529,7 +555,7 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.transactions.read");
             var q = db.Payouts.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(p => p.Status == s);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(p => p.Status == s);
             return await Paging.List(q, req);
         });
 
@@ -582,7 +608,8 @@ public static class AdminEndpoints
                 foreach (var p in prior) p.Active = false;
                 var f = new FeeSchedule
                 {
-                    Id = Ids.New("fee"), CreatedAt = uow.Now, OrgId = r.OrgId, Country = r.Country, Method = r.Method, PercentBps = r.PercentBps, FixedMinor = r.FixedMinor,
+                    Id = Ids.New("fee"), CreatedAt = uow.Now, OrgId = string.IsNullOrWhiteSpace(r.OrgId) ? null : r.OrgId, Country = string.IsNullOrWhiteSpace(r.Country) ? null : r.Country.Trim().ToUpperInvariant(),
+                    Method = string.IsNullOrWhiteSpace(r.Method) ? null : r.Method.Trim().ToLowerInvariant(), PercentBps = r.PercentBps, FixedMinor = r.FixedMinor, Priority = r.Priority ?? 100,
                     FixedCurrency = Money.Normalize(r.FixedCurrency), MinimumMinor = r.MinimumMinor, MaximumMinor = r.MaximumMinor, InternationalBps = r.InternationalBps,
                     Version = prior.Select(p => p.Version).DefaultIfEmpty(0).Max() + 1,
                 };
@@ -602,6 +629,7 @@ public static class AdminEndpoints
                 var category = r.TaxCategory ?? "*";
                 var customerType = r.CustomerType ?? "*";
                 var prior = await db.TaxRules.Where(x => x.Country == r.Country.ToUpperInvariant() && x.TaxCategory == category && x.CustomerType == customerType && x.EffectiveTo == null).ToListAsync();
+                if (prior.Any(p => p.EffectiveFrom >= effective)) throw ApiException.Invalid("A new rule version must take effect after the current version's start date.");
                 foreach (var p in prior) p.EffectiveTo = effective;
                 var rule = new TaxRule
                 {
@@ -622,15 +650,17 @@ public static class AdminEndpoints
                 var rule = await db.MonitoringRules.FirstOrDefaultAsync(x => x.Key == key) ?? throw ApiException.NotFound("monitoring rule");
                 var before = new { rule.Enabled, rule.Severity, rule.Action, rule.ParamsJson, rule.Version };
                 if (r.Enabled != null) rule.Enabled = r.Enabled.Value;
+                if (r.Severity != null && r.Severity is not ("LOW" or "MEDIUM" or "HIGH" or "CRITICAL")) throw ApiException.Invalid("severity must be LOW, MEDIUM, HIGH or CRITICAL.");
+                if (r.Action != null && r.Action is not ("hold" or "alert")) throw ApiException.Invalid("action must be hold or alert.");
                 if (r.Severity != null) rule.Severity = r.Severity;
-                if (r.Action is "hold" or "alert") rule.Action = r.Action;
+                if (r.Action != null) rule.Action = r.Action;
                 if (r.Params != null)
                 {
                     var merged = Json.Deserialize<Dictionary<string, long>>(rule.ParamsJson) ?? new();
                     foreach (var (k, v) in r.Params) merged[k] = v;
                     rule.ParamsJson = Json.Serialize(merged);
                 }
-                rule.Version++;
+                if (before.Enabled != rule.Enabled || before.Severity != rule.Severity || before.Action != rule.Action || before.ParamsJson != rule.ParamsJson) rule.Version++;
                 uow.Audit("config.monitoring_rule", "monitoring_rule", rule.Id, before, new { rule.Enabled, rule.Severity, rule.Action, rule.ParamsJson, rule.Version });
                 await Task.CompletedTask;
                 return rule;
@@ -647,7 +677,7 @@ public static class AdminEndpoints
                 c.CheckoutEnabled = r.CheckoutEnabled ?? c.CheckoutEnabled; c.WalletEnabled = r.WalletEnabled ?? c.WalletEnabled; c.PayoutsEnabled = r.PayoutsEnabled ?? c.PayoutsEnabled;
                 c.MerchantOnboardingEnabled = r.MerchantOnboardingEnabled ?? c.MerchantOnboardingEnabled; c.PaymentMethodsCsv = r.PaymentMethodsCsv ?? c.PaymentMethodsCsv;
                 c.WalletKycLevelRequired = r.WalletKycLevelRequired ?? c.WalletKycLevelRequired;
-                uow.Audit("config.country", "country_capability", c.Id, before, new { c.CheckoutEnabled, c.WalletEnabled, c.PayoutsEnabled, c.MerchantOnboardingEnabled, c.PaymentMethodsCsv });
+                uow.Audit("config.country", "country_capability", c.Id, before, new { c.CheckoutEnabled, c.WalletEnabled, c.PayoutsEnabled, c.MerchantOnboardingEnabled, c.PaymentMethodsCsv, c.WalletKycLevelRequired });
                 await Task.CompletedTask;
                 return c;
             });
@@ -660,16 +690,19 @@ public static class AdminEndpoints
         {
             ctx.RequireAdmin("admin.audit.read");
             var q = db.AuditLogs.AsQueryable();
-            if (req.Query["actor"].FirstOrDefault() is { } actor) q = q.Where(x => x.ActorId == actor);
-            if (req.Query["object"].FirstOrDefault() is { } obj) q = q.Where(x => x.ObjectId == obj);
-            if (req.Query["action"].FirstOrDefault() is { } act) q = q.Where(x => x.Action.StartsWith(act));
-            if (req.Query["org"].FirstOrDefault() is { } org) q = q.Where(x => x.OrgId == org);
-            if (req.Query["ip"].FirstOrDefault() is { } ip) q = q.Where(x => x.Ip == ip);
+            if (req.Query["actor"].FirstOrDefault() is { Length: > 0 } actor) q = q.Where(x => x.ActorId == actor);
+            if (req.Query["object"].FirstOrDefault() is { Length: > 0 } obj) q = q.Where(x => x.ObjectId == obj);
+            if (req.Query["action"].FirstOrDefault() is { Length: > 0 } act) q = q.Where(x => x.Action.StartsWith(act));
+            if (req.Query["org"].FirstOrDefault() is { Length: > 0 } org) q = q.Where(x => x.OrgId == org);
+            if (req.Query["ip"].FirstOrDefault() is { Length: > 0 } ip) q = q.Where(x => x.Ip == ip);
             if (Paging.Date(req, "from") is { } from) q = q.Where(x => x.At >= from);
             if (Paging.Date(req, "to") is { } to) q = q.Where(x => x.At < to);
             if (long.TryParse(req.Query["before_seq"], out var before)) q = q.Where(x => x.Seq < before);
-            var rows = await q.OrderByDescending(x => x.Seq).Take(Math.Clamp(int.TryParse(req.Query["limit"], out var n) ? n : 50, 1, 200)).ToListAsync();
-            return new { @object = "list", data = rows, next_before_seq = rows.LastOrDefault()?.Seq };
+            var take = Math.Clamp(int.TryParse(req.Query["limit"], out var n) ? n : 50, 1, 200);
+            var fetched = await q.OrderByDescending(x => x.Seq).Take(take + 1).ToListAsync();
+            var hasMore = fetched.Count > take;
+            var rows = fetched.Take(take).ToList();
+            return new { @object = "list", data = rows, has_more = hasMore, next_before_seq = hasMore ? rows.LastOrDefault()?.Seq : null };
         });
         a.MapGet("/audit_logs/export", async (HttpRequest req, RequestContext ctx, AppDb db, Uow uow) =>
         {
@@ -677,8 +710,8 @@ public static class AdminEndpoints
             var reason = req.Query["reason"].ToString();
             if (reason.Length < 5) throw ApiException.Invalid("Exports require a reason (§136).");
             var q = db.AuditLogs.AsQueryable();
-            if (req.Query["object"].FirstOrDefault() is { } obj) q = q.Where(x => x.ObjectId == obj || x.CaseId == obj);
-            if (req.Query["org"].FirstOrDefault() is { } org) q = q.Where(x => x.OrgId == org);
+            if (req.Query["object"].FirstOrDefault() is { Length: > 0 } obj) q = q.Where(x => x.ObjectId == obj || x.CaseId == obj);
+            if (req.Query["org"].FirstOrDefault() is { Length: > 0 } org) q = q.Where(x => x.OrgId == org);
             var rows = await q.OrderBy(x => x.Seq).Take(50_000).ToListAsync();
             await uow.Run(async () => { uow.Audit("audit.export", "audit_log", null, after: new { rows = rows.Count, filter = req.QueryString.Value }, reason: reason); await Task.CompletedTask; });
             return Results.Text(Csv.Write(rows, ("seq", r => r.Seq), ("at", r => r.At), ("actor_type", r => r.ActorType), ("actor", r => r.ActorId), ("role", r => r.ActorRole), ("org", r => r.OrgId),

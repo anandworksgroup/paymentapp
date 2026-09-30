@@ -56,7 +56,8 @@ public class ScreeningService(AppDb db, Uow uow)
                 RelatedJson = Json.Serialize(new { screening_check = check.Id, entry = best.Id, program = best.Program }),
                 DedupeKey = $"screen:{subjectId}:{best.Id}:{context}:{uow.Now:yyyyMMddHH}",
             };
-            if (!await db.Alerts.AnyAsync(a => a.DedupeKey == alert.DedupeKey)) db.Alerts.Add(alert);
+            var existing = await db.Alerts.FirstOrDefaultAsync(a => a.DedupeKey == alert.DedupeKey);
+            if (existing == null) db.Alerts.Add(alert); else alert = existing;
             check.AlertId = alert.Id;
             alertId = alert.Id;
         }

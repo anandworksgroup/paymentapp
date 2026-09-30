@@ -71,7 +71,7 @@ public class ReportsService(AppDb db, TreasuryService treasury)
             balance = await treasury.Balance(orgId, livemode),
             series,
             by_country = succeeded.GroupBy(p => p.Country ?? "??").Select(g => new { country = g.Key, gross = g.Sum(p => R(p.Amount - p.TaxAmount, p.Currency)), count = g.Count() }).OrderByDescending(x => x.gross),
-            by_method = payments.GroupBy(p => p.PaymentMethodType ?? "unknown").Select(g => new { method = g.Key, count = g.Count(), success_rate = Math.Round(g.Count(p => p.AmountCaptured > 0) * 100.0 / g.Count(), 1) }),
+            by_method = payments.GroupBy(p => p.PaymentMethodType ?? "unknown").Select(g => new { method = g.Key, count = g.Count(), success_rate = Math.Round(g.Count(p => p.AmountCaptured > 0) * 100.0 / g.Count(), 1), gross = g.Where(p => p.AmountCaptured > 0).Sum(p => R(p.Amount - p.TaxAmount, p.Currency)) }),
             by_provider = payments.Where(p => p.ProviderId != null).GroupBy(p => p.ProviderId).Select(g => new { provider = g.Key, count = g.Count(), success_rate = Math.Round(g.Count(p => p.AmountCaptured > 0) * 100.0 / g.Count(), 1) }),
             definitions = Definitions,
         };

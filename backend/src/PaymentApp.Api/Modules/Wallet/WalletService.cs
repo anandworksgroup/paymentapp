@@ -306,6 +306,35 @@ public class WalletService(AppDb db, Uow uow, LedgerService ledger, FxService fx
         Complete(t, ltx.Id, "Sent.");
     }
 
+    /// <summary>Converts between the user's own balances using a binding quote (the Exchange action).</summary>
+    public async Task<Transfer> Exchange(User user, string quoteId)
+    {
+        var w = await ForUser(user, create: false) ?? throw ApiException.NotFound("wallet");
+        EnsureCanMove(user, w, "transfer");
+        var quote = await db.FxQuotes.FirstOrDefaultAsync(q => q.Id == quoteId && q.UserId == user.Id) ?? throw ApiException.NotFound("quote");
+        if (quote.UsedAt != null) throw ApiException.Conflict("quote_used", "This quote was already used.");
+        if (quote.ExpiresAt < uow.Now) throw ApiException.Conflict("quote_expired", "This quote has expired. Get a new one.");
+        if (quote.FromCurrency == quote.ToCurrency) throw ApiException.Invalid("Pick two different currencies.");
+        await EnforceLimits(user, w, "conversion", quote.SourceAmount, quote.FromCurrency);
+        await EnforceMaxBalance(user, w, quote.DestinationAmount, quote.ToCurrency);
+        return await uow.Run(async () =>
+        {
+            var available = await Available(w, quote.FromCurrency);
+            if (available < quote.SourceAmount + quote.FeeAmount)
+                throw new ApiException(400, "insufficient_funds", $"Available {Money.Format(available, quote.FromCurrency)}; this needs {Money.Format(quote.SourceAmount + quote.FeeAmount, quote.FromCurrency)} including fees.");
+            var t = NewTransfer("conversion", user, w.Id, w.Id, quote.FromCurrency, quote.SourceAmount, quote.ToCurrency, quote.DestinationAmount);
+            t.FeeAmount = quote.FeeAmount;
+            t.Rail = "internal_ledger";
+            t.FxQuoteId = quote.Id; t.FxRateE9 = quote.CustomerRateE9; t.FxMidRateE9 = quote.MidRateE9; t.FxRateTimestamp = quote.RateTimestamp; t.FxSpreadAmount = quote.SpreadAmount;
+            t.SenderCountry = t.RecipientCountry = user.Country;
+            quote.UsedAt = uow.Now;
+            db.Transfers.Add(t);
+            await PostInternal(t);
+            t.CustomerMessage = $"Converted to {t.DestinationCurrency}.";
+            return t;
+        });
+    }
+
     // ───────────────────────── Withdraw (§40) ─────────────────────────
 
     public async Task<Transfer> Withdraw(User user, string currency, long amount, string bankAccountId, string? quoteId)

@@ -138,7 +138,7 @@ public class AuthMiddleware(RequestDelegate next)
         var hash = Crypto.Sha256Hex(token);
         var key = await db.ApiKeys.FirstOrDefaultAsync(k => k.KeyHash == hash && k.RevokedAt == null)
                   ?? throw new ApiException(401, "invalid_api_key", "Invalid API key provided.");
-        if (!string.IsNullOrEmpty(key.AllowedIpsCsv) && !key.AllowedIpsCsv.Split(',').Contains(ctx.Ip))
+        if (!string.IsNullOrEmpty(key.AllowedIpsCsv) && !key.AllowedIpsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(ctx.Ip))
             throw new ApiException(403, "ip_not_allowed", "This API key is not allowed from your IP address.");
         var org = await db.Organizations.FirstAsync(o => o.Id == key.OrgId);
         if (org.Status == "CLOSED") throw new ApiException(401, "account_closed", "This account is closed.");

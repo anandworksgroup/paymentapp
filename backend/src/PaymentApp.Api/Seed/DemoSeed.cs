@@ -368,8 +368,10 @@ public static class DemoSeed
         var sp = scope.ServiceProvider;
         var ctx = sp.GetRequiredService<RequestContext>();
         ctx.User = user;
-        ctx.Ip = "198.51.100.10";
-        ctx.UserAgent = "demo-seed";
+        var who = user?.Id ?? "anon";
+        ctx.Ip = $"198.51.100.{(Math.Abs(who.GetHashCode()) % 200) + 20}";
+        ctx.UserAgent = "Mozilla/5.0 (demo seed)";
+        ctx.DeviceId = "dev-" + Crypto.Sha256Hex(who)[..12];
         if (user?.PlatformRole != null && Permissions.AdminRoles.TryGetValue(user.PlatformRole, out var perms)) ctx.AdminPermissions = perms.ToHashSet();
         if (orgId != null)
         {

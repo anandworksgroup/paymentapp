@@ -420,7 +420,7 @@ public class ComplianceService(AppDb db, Uow uow, LedgerService ledger, IService
 /// </summary>
 public class FundFlowService(AppDb db)
 {
-    public record Node(string Id, string Type, string Label, string? Country);
+    public record Node(string Id, string Type, string Label, string? Country, string? OwnerType = null, string? OwnerId = null, string? Handle = null);
     public record Edge(string Id, string From, string To, string Type, long Amount, string Currency, DateTime At, string Status, string Relation, string? Note);
 
     public async Task<object> Graph(string userId, DateTime from, DateTime to)
@@ -513,7 +513,11 @@ public class FundFlowService(AppDb db)
             var owners = await db.Wallets.Where(w => counterparties.Contains(w.Id)).ToListAsync();
             foreach (var o in owners) links.Add(new { user = o.OwnerId, signal = "direct_counterparty", strength = "direct", detail = $"Transacted with wallet {o.Handle}" });
         }
-        return new { @object = "counterparty_network", subject = userId, links, caution = "Shared signals are investigation leads. They are not evidence of wrongdoing on their own." };
+        var staff = (await db.Users.Where(u => u.PlatformRole != null).Select(u => u.Id).ToListAsync()).ToHashSet();
+        var distinct = links.Select(l => System.Text.Json.JsonSerializer.SerializeToElement(l))
+            .Where(l => !staff.Contains(l.GetProperty("user").GetString() ?? ""))
+            .GroupBy(l => (l.GetProperty("user").GetString(), l.GetProperty("signal").GetString())).Select(g => g.First()).ToList();
+        return new { @object = "counterparty_network", subject = userId, links = distinct, caution = "Shared signals are investigation leads. They are not evidence of wrongdoing on their own." };
     }
 
     private async Task AddWalletNode(Dictionary<string, Node> nodes, Data.Wallet w)
@@ -533,7 +537,7 @@ public class FundFlowService(AppDb db)
             label = $"{o?.Name} (business wallet)";
             country = o?.Country;
         }
-        nodes[w.Id] = new Node(w.Id, w.OwnerType == "user" ? "user_wallet" : "merchant_wallet", label, country);
+        nodes[w.Id] = new Node(w.Id, w.OwnerType == "user" ? "user_wallet" : "merchant_wallet", label, country, w.OwnerType, w.OwnerId, w.Handle);
     }
 
     private async Task AddTransferEdge(Dictionary<string, Node> nodes, List<Edge> edges, Transfer t, string relation, string? note)

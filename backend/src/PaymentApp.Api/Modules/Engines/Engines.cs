@@ -64,6 +64,8 @@ public static class PricingEngine
         {
             var tiers = p.Tiers ?? throw ApiException.Invalid("tiers are required for a tiered price.");
             if (tiers.Count == 0 || tiers[^1].UpTo != null) throw ApiException.Invalid("The last tier must have up_to = null (infinity).");
+            if (tiers.Count > 1 && tiers[0].UpTo is null or < 1) throw ApiException.Invalid("The first tier needs a positive up_to.");
+            if (tiers.Any(t => t.UnitAmount < 0 || t.FlatAmount < 0)) throw ApiException.Invalid("Tier amounts must be non-negative.");
             for (var i = 1; i < tiers.Count - 1; i++)
                 if (tiers[i].UpTo <= tiers[i - 1].UpTo) throw ApiException.Invalid("Tier bounds must be increasing.");
             if (p.TiersMode is not ("volume" or "graduated")) throw ApiException.Invalid("tiers_mode must be volume or graduated.");

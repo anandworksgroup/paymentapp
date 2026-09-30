@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+/*
+  Design tokens — "modern financial operating system" (user-mandated reference style):
+  misty sage/off-white canvas, white rounded glass cards, sage-mint gradients, pastel lemon accent
+  chips, peach highlights, charcoal pill actions, large light numerals, Inter throughout.
+  Every screen (merchant, admin, checkout, portal) uses these tokens — never raw hex in components.
+*/
+:root {
+  --bg: #eef1ec;
+  --bg-tint-a: #dcebd4;
+  --bg-tint-b: #f6f2d6;
+  --surface: #ffffff;
+  --surface-2: #f6f7f4;
+  --surface-3: #eef0ec;
+  --glass: rgba(255, 255, 255, 0.72);
+  --line: #e6e9e4;
+  --line-strong: #d9ddd7;
+
+  --text: #1d1f1e;
+  --text-2: #4b504c;
+  --muted: #8b918c;
+  --faint: #b9beb9;
+
+  --sage-50: #f1f7ee;
+  --sage-100: #dfefd8;
+  --sage-200: #c7e4bd;
+  --sage-300: #a9d59e;
+  --sage-500: #7dbb78;
+  --sage-700: #4e8f55;
+
+  --lemon: #f2e35a;
+  --lemon-soft: #f8f1b8;
+  --lemon-ink: #5f5410;
+
+  --peach: #f6c79a;
+  --peach-soft: #fbe6d2;
+  --peach-ink: #8a4a1c;
+
+  --rose: #e8866f;
+  --rose-soft: #fbe1da;
+  --rose-ink: #8e2f1c;
+
+  --sky-soft: #e3edf6;
+  --sky-ink: #2e5475;
+
+  --ink: #2d2e30;
+  --ink-2: #3a3b3e;
+  --on-ink: #ffffff;
+
+  --radius-card: 28px;
+  --radius-inner: 20px;
+  --radius-field: 14px;
+  --shadow-card: 0 1px 2px rgba(20, 30, 20, 0.04), 0 12px 32px rgba(30, 40, 30, 0.06);
+  --shadow-float: 0 18px 48px rgba(30, 40, 30, 0.12);
+}
+
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-sage-50: var(--sage-50);
+  --color-sage-100: var(--sage-100);
+  --color-sage-200: var(--sage-200);
+  --color-sage-300: var(--sage-300);
+  --color-sage-500: var(--sage-500);
+  --color-sage-700: var(--sage-700);
+  --color-lemon: var(--lemon);
+  --color-lemon-soft: var(--lemon-soft);
+  --color-lemon-ink: var(--lemon-ink);
+  --color-peach: var(--peach);
+  --color-peach-soft: var(--peach-soft);
+  --color-peach-ink: var(--peach-ink);
+  --color-rose: var(--rose);
+  --color-rose-soft: var(--rose-soft);
+  --color-rose-ink: var(--rose-ink);
+  --color-sky-soft: var(--sky-soft);
+  --color-sky-ink: var(--sky-ink);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+
+  --radius-card: var(--radius-card);
+  --radius-inner: var(--radius-inner);
+  --radius-field: var(--radius-field);
+  --shadow-card: var(--shadow-card);
+  --shadow-float: var(--shadow-float);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "cv11", "ss01", "tnum";
+  background:
+    radial-gradient(1200px 700px at -10% -10%, var(--bg-tint-a) 0%, transparent 60%),
+    radial-gradient(900px 600px at 110% 0%, var(--bg-tint-b) 0%, transparent 55%),
+    var(--bg);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Large light numerals with a small currency code, e.g. €8,499 EUR */
+.numeral {
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+}
+
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+.card {
+  background: var(--surface);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.sage-gradient {
+  background: linear-gradient(160deg, #e9f4e3 0%, #d3e9c9 45%, #c2e0b6 100%);
+}
+
+.lemon-gradient {
+  background: linear-gradient(160deg, #fbf6cf 0%, #f4e77a 100%);
+}
+
+:focus-visible {
+  outline: 2px solid var(--sage-700);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+::selection {
+  background: var(--lemon-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

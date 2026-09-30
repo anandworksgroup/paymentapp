@@ -367,11 +367,13 @@ public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRout
                 SourceType = "refund", SourceId = r.Id, Status = "available", AvailableOn = uow.Now, LedgerTransactionId = ltx.Id,
                 Description = $"Refund of {p.Id} (platform fee retained)",
             });
+            var originalTaxType = await db.TaxRecords.Where(t => t.TaxAmount > 0 && ((p.OrderId != null && t.OrderId == p.OrderId) || (p.InvoiceId != null && t.InvoiceId == p.InvoiceId)))
+                .Select(t => t.TaxType).FirstOrDefaultAsync() ?? "VAT";
             if (r.TaxAmount > 0)
                 db.TaxRecords.Add(new TaxRecord
                 {
                     Id = Ids.New("taxrec"), CreatedAt = uow.Now, OrgId = p.OrgId, Livemode = p.Livemode, SourceType = "refund", SourceId = r.Id,
-                    OrderId = p.OrderId, InvoiceId = p.InvoiceId, Country = taxCountry, TaxType = "refund", TaxableAmount = -(r.Amount - r.TaxAmount),
+                    OrderId = p.OrderId, InvoiceId = p.InvoiceId, Country = taxCountry, TaxType = originalTaxType, TaxableAmount = -(r.Amount - r.TaxAmount),
                     TaxAmount = -r.TaxAmount, Currency = p.Currency,
                 });
             uow.Emit("refund.succeeded", r);

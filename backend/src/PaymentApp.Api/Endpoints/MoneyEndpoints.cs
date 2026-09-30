@@ -37,13 +37,13 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("payments.read");
             var q = db.Payments.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(p => p.Status == s);
-            if (req.Query["customer"].FirstOrDefault() is { } c) q = q.Where(p => p.CustomerId == c);
-            if (req.Query["country"].FirstOrDefault() is { } co) q = q.Where(p => p.Country == co);
-            if (req.Query["currency"].FirstOrDefault() is { } cu) q = q.Where(p => p.Currency == cu);
-            if (req.Query["method"].FirstOrDefault() is { } m) q = q.Where(p => p.PaymentMethodType == m);
-            if (req.Query["provider"].FirstOrDefault() is { } pr) q = q.Where(p => p.ProviderId == pr);
-            if (req.Query["review"].FirstOrDefault() is { } rv) q = q.Where(p => p.ReviewStatus == rv);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(p => p.Status == s);
+            if (req.Query["customer"].FirstOrDefault() is { Length: > 0 } c) q = q.Where(p => p.CustomerId == c);
+            if (req.Query["country"].FirstOrDefault() is { Length: > 0 } co) q = q.Where(p => p.Country == co);
+            if (req.Query["currency"].FirstOrDefault() is { Length: > 0 } cu) q = q.Where(p => p.Currency == cu);
+            if (req.Query["method"].FirstOrDefault() is { Length: > 0 } m) q = q.Where(p => p.PaymentMethodType == m);
+            if (req.Query["provider"].FirstOrDefault() is { Length: > 0 } pr) q = q.Where(p => p.ProviderId == pr);
+            if (req.Query["review"].FirstOrDefault() is { Length: > 0 } rv) q = q.Where(p => p.ReviewStatus == rv);
             if (Paging.Date(req, "from") is { } from) q = q.Where(p => p.CreatedAt >= from);
             if (Paging.Date(req, "to") is { } to) q = q.Where(p => p.CreatedAt < to);
             if (req.Query["search"].FirstOrDefault() is { Length: > 2 } term) q = q.Where(p => p.Id == term || p.CustomerEmail == term.ToLower() || p.Last4 == term || p.OrderId == term || p.InvoiceId == term);
@@ -53,6 +53,8 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("payments.read");
             var p = await db.Payments.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("payment");
+            var inFlightRefunds = await db.Refunds.Where(r => r.PaymentId == id && (r.Status == "REQUESTED" || r.Status == "PROCESSING")).SumAsync(r => (long?)r.Amount) ?? 0;
+            var refundable = p.Status is "SUCCEEDED" or "PARTIALLY_REFUNDED" ? Math.Max(0, p.AmountCaptured - p.AmountRefunded - p.AmountDisputed - inFlightRefunds) : 0;
             var ledgerTxns = await db.LedgerTransactions.Where(t => t.SourceId == id || (t.SourceType == "refund" && db.Refunds.Where(r => r.PaymentId == id).Select(r => r.Id).Contains(t.SourceId))
                                                                      || (t.SourceType == "dispute" && db.Disputes.Where(d => d.PaymentId == id).Select(d => d.Id).Contains(t.SourceId))).ToListAsync();
             var txIds = ledgerTxns.Select(t => t.Id).ToList();
@@ -61,6 +63,7 @@ public static class MoneyEndpoints
             return new
             {
                 payment = p,
+                refundable_amount = refundable,
                 fee_breakdown = new { customer_paid = p.AmountCaptured, tax = p.TaxAmount, platform_fee = p.FeeAmount, refunded = p.AmountRefunded, disputed = p.AmountDisputed, net_to_merchant = p.NetAmount - (p.AmountRefunded == 0 ? 0 : p.AmountRefunded - Money.Ratio(p.TaxAmount, p.AmountRefunded, Math.Max(1, p.Amount), p.Currency)), currency = p.Currency },
                 attempts = await db.PaymentAttempts.Where(a => a.PaymentId == id).OrderBy(a => a.CreatedAt).ToListAsync(),
                 refunds = await db.Refunds.Where(r => r.PaymentId == id).OrderBy(r => r.CreatedAt).ToListAsync(),
@@ -111,7 +114,7 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("disputes.read");
             var q = db.Disputes.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(d => d.Status == s);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(d => d.Status == s);
             return await Paging.List(q, req);
         });
         pay.MapGet("/disputes/{id}", async (string id, RequestContext ctx, AppDb db) =>
@@ -129,7 +132,7 @@ public static class MoneyEndpoints
                     purchase = new { p.Id, p.CreatedAt, p.Amount, p.Currency, p.CustomerEmail, p.CardBrand, p.Last4, p.ThreeDsResult },
                     terms_accepted = order?.AcceptedTermsVersion, ip = p.Ip,
                     entitlements = await db.Entitlements.Where(e => e.SourceId == p.OrderId || e.SourceId == p.InvoiceId).ToListAsync(),
-                    usage_events = p.CustomerId == null ? 0 : await db.UsageEvents.CountAsync(u => u.CustomerId == p.CustomerId),
+                    usage_events = p.CustomerId == null ? 0 : await db.UsageEvents.CountAsync(u => u.CustomerId == p.CustomerId && u.Timestamp >= p.CreatedAt),
                 },
             };
         });
@@ -141,7 +144,21 @@ public static class MoneyEndpoints
                     throw ApiException.Invalid($"File {e.FileId} is not a dispute_evidence upload of this account.");
             return await payments.SubmitEvidence(id, r.Evidence.Select(e => (e.Type, e.Text, e.FileId)), r.Submit);
         });
-        pay.MapGet("/orders", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("payments.read"); return await Paging.List(db.Orders, req); });
+        pay.MapGet("/orders", async (HttpRequest req, RequestContext ctx, AppDb db) =>
+        {
+            ctx.RequireOrg("payments.read");
+            var q = db.Orders.AsQueryable();
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } st) q = q.Where(o => o.Status == st);
+            if (req.Query["customer"].FirstOrDefault() is { Length: > 0 } cu) q = q.Where(o => o.CustomerId == cu);
+            var page = await Paging.List(q, req);
+            if (req.Query["expand"] != "summary") return page;
+            return await Paging.Expand(page, async rows =>
+            {
+                var ids = rows.Cast<Order>().Select(o => o.CustomerId).ToList();
+                var customers = await db.Customers.Where(c => ids.Contains(c.Id)).ToDictionaryAsync(c => c.Id);
+                return rows.Cast<Order>().ToDictionary(o => o.Id, o => (object)new { customer_name = o.CustomerId == null ? null : customers.GetValueOrDefault(o.CustomerId)?.Name, customer_email = o.CustomerId == null ? null : customers.GetValueOrDefault(o.CustomerId)?.Email });
+            });
+        });
         pay.MapGet("/orders/{id}", async (string id, RequestContext ctx, AppDb db) =>
         {
             ctx.RequireOrg("payments.read");
@@ -163,9 +180,27 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("subscriptions.read");
             var q = db.Subscriptions.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(x => x.Status == s);
-            if (req.Query["customer"].FirstOrDefault() is { } c) q = q.Where(x => x.CustomerId == c);
-            return await Paging.List(q, req);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(x => x.Status == s);
+            if (req.Query["customer"].FirstOrDefault() is { Length: > 0 } c) q = q.Where(x => x.CustomerId == c);
+            var page = await Paging.List(q, req);
+            if (req.Query["expand"] != "summary") return page;
+            // expand=summary adds customer and plan names so list rows need no follow-up calls.
+            return await Paging.Expand(page, async rows =>
+            {
+                var subs = rows.Cast<Subscription>().ToList();
+                var customerIds = subs.Select(s => s.CustomerId).ToList();
+                var customers = await db.Customers.Where(x => customerIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id);
+                var subIds = subs.Select(s => s.Id).ToList();
+                var items = await db.SubscriptionItems.Where(i => subIds.Contains(i.SubscriptionId) && !i.Deleted).ToListAsync();
+                var priceIds = items.Select(i => i.PriceId).ToList();
+                var prices = await db.Prices.Where(x => priceIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id);
+                var products = await db.Products.Where(x => prices.Values.Select(p => p.ProductId).Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Name);
+                return subs.ToDictionary(s => s.Id, s => (object)new
+                {
+                    customer_name = customers.GetValueOrDefault(s.CustomerId)?.Name, customer_email = customers.GetValueOrDefault(s.CustomerId)?.Email,
+                    plan = string.Join(" + ", items.Where(i => i.SubscriptionId == s.Id).Select(i => products.GetValueOrDefault(prices[i.PriceId].ProductId) + (i.Quantity > 1 ? $" × {i.Quantity}" : ""))),
+                });
+            });
         });
         bill.MapGet("/subscriptions/{id}", async (string id, RequestContext ctx, AppDb db, CreditService credits) =>
         {
@@ -204,9 +239,9 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("invoices.read");
             var q = db.Invoices.AsQueryable();
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(x => x.Status == s);
-            if (req.Query["customer"].FirstOrDefault() is { } c) q = q.Where(x => x.CustomerId == c);
-            if (req.Query["subscription"].FirstOrDefault() is { } sub) q = q.Where(x => x.SubscriptionId == sub);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(x => x.Status == s);
+            if (req.Query["customer"].FirstOrDefault() is { Length: > 0 } c) q = q.Where(x => x.CustomerId == c);
+            if (req.Query["subscription"].FirstOrDefault() is { Length: > 0 } sub) q = q.Where(x => x.SubscriptionId == sub);
             return await Paging.List(q, req);
         });
         bill.MapGet("/invoices/{id}", async (string id, RequestContext ctx, AppDb db) =>
@@ -268,8 +303,8 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("usage.read");
             var q = db.UsageEvents.AsQueryable();
-            if (req.Query["customer"].FirstOrDefault() is { } c) q = q.Where(u => u.CustomerId == c);
-            if (req.Query["event_name"].FirstOrDefault() is { } e) q = q.Where(u => u.EventName == e);
+            if (req.Query["customer"].FirstOrDefault() is { Length: > 0 } c) q = q.Where(u => u.CustomerId == c);
+            if (req.Query["event_name"].FirstOrDefault() is { Length: > 0 } e) q = q.Where(u => u.EventName == e);
             if (Paging.Date(req, "from") is { } from) q = q.Where(u => u.Timestamp >= from);
             if (Paging.Date(req, "to") is { } to) q = q.Where(u => u.Timestamp < to);
             var rows = await q.ToListAsync();
@@ -297,8 +332,8 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("customers.read");
             var q = db.Entitlements.AsQueryable();
-            if (req.Query["customer"].FirstOrDefault() is { } c) q = q.Where(e => e.CustomerId == c);
-            if (req.Query["status"].FirstOrDefault() is { } s) q = q.Where(e => e.Status == s);
+            if (req.Query["customer"].FirstOrDefault() is { Length: > 0 } c) q = q.Where(e => e.CustomerId == c);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } s) q = q.Where(e => e.Status == s);
             return await Paging.List(q, req);
         });
         bill.MapPost("/test_clocks", async (ClockRequest r, RequestContext ctx, AppDb db, Uow uow) =>
@@ -332,8 +367,8 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("balance.read");
             var q = db.BalanceTransactions.AsQueryable();
-            if (req.Query["type"].FirstOrDefault() is { } t) q = q.Where(x => x.Type == t);
-            if (req.Query["payout"].FirstOrDefault() is { } p) q = q.Where(x => x.PayoutId == p);
+            if (req.Query["type"].FirstOrDefault() is { Length: > 0 } t) q = q.Where(x => x.Type == t);
+            if (req.Query["payout"].FirstOrDefault() is { Length: > 0 } p) q = q.Where(x => x.PayoutId == p);
             return await Paging.List(q, req);
         });
         fin.MapPost("/balance/transfer_to_wallet", async (WalletMoveRequest r, RequestContext ctx, WalletService wallet, IClock clock) =>
@@ -372,7 +407,7 @@ public static class MoneyEndpoints
             var orgId = ctx.RequireOrg("ledger.read");
             var accountIds = await db.LedgerAccounts.Where(a => a.OwnerType == "org" && a.OwnerId == orgId && a.Livemode == ctx.Livemode).ToDictionaryAsync(a => a.Id);
             var q = db.LedgerEntries.Where(e => accountIds.Keys.Contains(e.AccountId));
-            if (req.Query["account"].FirstOrDefault() is { } acct) q = q.Where(e => e.AccountId == acct);
+            if (req.Query["account"].FirstOrDefault() is { Length: > 0 } acct) q = q.Where(e => e.AccountId == acct);
             var entries = await q.OrderByDescending(e => e.CreatedAt).Take(Math.Clamp(int.TryParse(req.Query["limit"], out var n) ? n : 100, 1, 500)).ToListAsync();
             var txIds = entries.Select(e => e.TransactionId).Distinct().ToList();
             var txs = await db.LedgerTransactions.Where(t => txIds.Contains(t.Id)).ToDictionaryAsync(t => t.Id);
@@ -408,7 +443,15 @@ public static class MoneyEndpoints
                 registrations = await db.TaxRules.Select(r => r.Country).Distinct().ToListAsync(),
             };
         });
-        fin.MapGet("/tax/records", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("tax.read"); return await Paging.List(db.TaxRecords, req); });
+        fin.MapGet("/tax/records", async (HttpRequest req, RequestContext ctx, AppDb db) =>
+        {
+            ctx.RequireOrg("tax.read");
+            var q = db.TaxRecords.AsQueryable();
+            if (Paging.Date(req, "from") is { } from) q = q.Where(t => t.CreatedAt >= from);
+            if (Paging.Date(req, "to") is { } to) q = q.Where(t => t.CreatedAt < to);
+            if (req.Query["country"].FirstOrDefault() is { Length: > 0 } c) q = q.Where(t => t.Country == c);
+            return await Paging.List(q, req);
+        });
 
         var rep = app.MapGroup("/v1/reports").WithTags("Reports");
         rep.MapGet("/dashboard", async (HttpRequest req, RequestContext ctx, ReportsService reports, AppDb db) =>

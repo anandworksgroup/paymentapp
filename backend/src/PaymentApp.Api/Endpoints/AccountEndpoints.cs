@@ -56,6 +56,22 @@ public static class AccountEndpoints
         });
         auth.MapPost("/step-up", async (StepUpRequest r, IdentityService ids, RequestContext ctx) =>
             await ids.StepUp(ctx.Session ?? throw ApiException.Unauthorized(), ctx.RequireUser(), r.Password, r.Code));
+        // Re-checks the password (e.g. to unlock an app) without granting step-up privileges.
+        auth.MapPost("/verify_password", async (StepUpRequest r, RequestContext ctx, AppDb db, IClock clock) =>
+        {
+            var user = ctx.RequireUser();
+            var since = clock.UtcNow.AddMinutes(-15);
+            if (await db.SecurityEvents.CountAsync(e => e.UserId == user.Id && e.Type == "password_check_failed" && e.CreatedAt >= since) >= 5)
+                throw new ApiException(429, "too_many_attempts", "Too many incorrect attempts. Try again in 15 minutes.");
+            var ok = Crypto.VerifyPassword(r.Password, user.PasswordHash);
+            if (!ok)
+            {
+                db.SecurityEvents.Add(new SecurityEvent { Id = Ids.New("sev"), CreatedAt = clock.UtcNow, UserId = user.Id, Type = "password_check_failed", Ip = ctx.Ip });
+                await db.SaveChangesAsync();
+                throw new ApiException(401, "invalid_credentials", "Password is incorrect.");
+            }
+            return new { verified = true };
+        }).RequireRateLimiting("financial");
         auth.MapPost("/mfa/enroll", async (IdentityService ids, RequestContext ctx) => await ids.BeginMfaEnrollment(ctx.RequireUser()));
         auth.MapPost("/mfa/confirm", async (CodeRequest r, IdentityService ids, RequestContext ctx) => await ids.ConfirmMfa(ctx.RequireUser(), r.Code));
 
@@ -70,7 +86,11 @@ public static class AccountEndpoints
             return new
             {
                 user,
-                organizations = orgs.Select(o => new { o.Id, o.Name, o.Status, o.GoLiveState, o.Country, o.DefaultCurrency, role = memberships.First(m => m.OrgId == o.Id).Role }),
+                organizations = orgs.Select(o =>
+                {
+                    var role = memberships.First(m => m.OrgId == o.Id).Role;
+                    return new { o.Id, o.Name, o.Status, o.GoLiveState, o.Country, o.DefaultCurrency, role, permissions = Permissions.MerchantRoles.GetValueOrDefault(role) ?? [] };
+                }),
                 wallet = wallet == null ? null : new { wallet.Id, wallet.Handle, wallet.Status },
                 admin_permissions = ctx.AdminPermissions,
             };
@@ -111,14 +131,34 @@ public static class AccountEndpoints
             var user = ctx.RequireUser();
             return new { @object = "list", data = await db.SecurityEvents.Where(e => e.UserId == user.Id).OrderByDescending(e => e.CreatedAt).Take(50).ToListAsync() };
         });
+        me.MapPost("/notifications/{id}/read", async (string id, RequestContext ctx, AppDb db) =>
+        {
+            var user = ctx.RequireUser();
+            var orgIds = await db.Memberships.Where(m => m.UserId == user.Id).Select(m => m.OrgId).ToListAsync();
+            var n = await db.Notifications.FirstOrDefaultAsync(x => x.Id == id && (x.UserId == user.Id || (x.OrgId != null && orgIds.Contains(x.OrgId)))) ?? throw ApiException.NotFound("notification");
+            n.Read = true;
+            await db.SaveChangesAsync();
+            return n;
+        });
+        me.MapPost("/notifications/read_all", async (HttpRequest req, RequestContext ctx, AppDb db) =>
+        {
+            var user = ctx.RequireUser();
+            var q = db.Notifications.Where(x => !x.Read && (x.UserId == user.Id || (ctx.OrgId != null && x.OrgId == ctx.OrgId)));
+            if (req.Query["scope"] == "personal") q = q.Where(x => x.OrgId == null);
+            var count = await q.ExecuteUpdateAsync(u => u.SetProperty(x => x.Read, true));
+            return new { marked_read = count };
+        });
         me.MapGet("/devices", async (RequestContext ctx, AppDb db) =>
             new { @object = "list", data = await db.Devices.Where(d => d.UserId == ctx.RequireUser().Id).OrderByDescending(d => d.LastSeenAt).ToListAsync() });
-        me.MapGet("/notifications", async (RequestContext ctx, AppDb db) =>
+        me.MapGet("/notifications", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {
             var user = ctx.RequireUser();
             var orgIds = await db.Memberships.Where(m => m.UserId == user.Id).Select(m => m.OrgId).ToListAsync();
             var q = db.Notifications.Where(n => n.UserId == user.Id || (n.OrgId != null && orgIds.Contains(n.OrgId) && n.Channel != "email"));
             if (ctx.OrgId != null) q = q.Where(n => n.UserId == user.Id || n.OrgId == ctx.OrgId);
+            // scope=personal → wallet/account notices only; scope=org → organization notices only.
+            if (req.Query["scope"] == "personal") q = q.Where(n => n.OrgId == null);
+            else if (req.Query["scope"] == "org") q = q.Where(n => n.OrgId != null);
             return new { @object = "list", data = await q.OrderByDescending(n => n.CreatedAt).Take(50).ToListAsync() };
         });
 
@@ -294,7 +334,7 @@ public static class AccountEndpoints
         dev.MapGet("/api_keys", async (RequestContext ctx, AppDb db) =>
         {
             var orgId = ctx.RequireOrg("developers.read");
-            return new { @object = "list", data = await db.ApiKeys.Where(k => k.OrgId == orgId).OrderByDescending(k => k.CreatedAt).ToListAsync() };
+            return new { @object = "list", data = await db.ApiKeys.Where(k => k.OrgId == orgId && k.Livemode == ctx.Livemode).OrderByDescending(k => k.CreatedAt).ToListAsync() };
         });
         dev.MapPost("/api_keys", async (ApiKeyRequest r, RequestContext ctx, MerchantService merchants, IClock clock) =>
         {
@@ -341,6 +381,18 @@ public static class AccountEndpoints
                 return e;
             });
         });
+        dev.MapPost("/webhook_endpoints/{id}/enable", async (string id, RequestContext ctx, AppDb db, Uow uow) =>
+        {
+            ctx.RequireOrg("developers.write");
+            return await uow.Run(async () =>
+            {
+                var e = await db.WebhookEndpoints.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("webhook endpoint");
+                e.Status = "enabled";
+                e.ConsecutiveFailures = 0;
+                uow.Audit("webhook.enable", "webhook_endpoint", e.Id);
+                return e;
+            });
+        });
         dev.MapDelete("/webhook_endpoints/{id}", async (string id, RequestContext ctx, AppDb db, Uow uow) =>
         {
             ctx.RequireOrg("developers.write");
@@ -366,7 +418,7 @@ public static class AccountEndpoints
             {
                 var e = new Event { Id = Ids.New("evt"), CreatedAt = uow.Now, OrgId = ep.OrgId, Livemode = ep.Livemode, Type = "test.ping", ObjectType = "organization", ObjectId = org.Id, DataJson = Json.Serialize(new { message = "Test event from the dashboard", organization = org.Id }) };
                 db.Events.Add(e);
-                var d = new WebhookDelivery { Id = Ids.New("whd"), CreatedAt = uow.Now, EventId = e.Id, EndpointId = ep.Id, Status = "pending", NextAttemptAt = uow.Now, IsReplay = true };
+                var d = new WebhookDelivery { Id = Ids.New("whd"), CreatedAt = uow.Now, EventId = e.Id, EndpointId = ep.Id, Status = "pending", NextAttemptAt = uow.Now };
                 db.WebhookDeliveries.Add(d);
                 await Task.CompletedTask;
                 return d;
@@ -378,17 +430,17 @@ public static class AccountEndpoints
         {
             ctx.RequireOrg("developers.read");
             var q = db.WebhookDeliveries.AsQueryable();
-            if (req.Query["event"].FirstOrDefault() is { } ev) q = q.Where(d => d.EventId == ev);
-            if (req.Query["endpoint"].FirstOrDefault() is { } ep) q = q.Where(d => d.EndpointId == ep);
-            if (req.Query["status"].FirstOrDefault() is { } st) q = q.Where(d => d.Status == st);
+            if (req.Query["event"].FirstOrDefault() is { Length: > 0 } ev) q = q.Where(d => d.EventId == ev);
+            if (req.Query["endpoint"].FirstOrDefault() is { Length: > 0 } ep) q = q.Where(d => d.EndpointId == ep);
+            if (req.Query["status"].FirstOrDefault() is { Length: > 0 } st) q = q.Where(d => d.Status == st);
             return await Paging.List(q, req);
         });
         dev.MapGet("/events", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {
             var orgId = ctx.RequireOrg("developers.read");
             var q = db.Events.Where(e => e.OrgId == orgId && e.Livemode == ctx.Livemode);
-            if (req.Query["type"].FirstOrDefault() is { } t) q = t.EndsWith('*') ? q.Where(e => e.Type.StartsWith(t.TrimEnd('*'))) : q.Where(e => e.Type == t);
-            if (req.Query["object_id"].FirstOrDefault() is { } o) q = q.Where(e => e.ObjectId == o);
+            if (req.Query["type"].FirstOrDefault() is { Length: > 0 } t) q = t.EndsWith('*') ? q.Where(e => e.Type.StartsWith(t.TrimEnd('*'))) : q.Where(e => e.Type == t);
+            if (req.Query["object_id"].FirstOrDefault() is { Length: > 0 } o) q = q.Where(e => e.ObjectId == o);
             return await Paging.List(q, req);
         });
         dev.MapGet("/events/{id}", async (string id, RequestContext ctx, AppDb db) =>
@@ -402,7 +454,8 @@ public static class AccountEndpoints
             var orgId = ctx.RequireOrg("developers.write");
             var e = await db.Events.FirstOrDefaultAsync(x => x.Id == id && x.OrgId == orgId && x.Livemode == ctx.Livemode) ?? throw ApiException.NotFound("event");
             var endpointId = req.Query["endpoint"].FirstOrDefault();
-            var endpoints = await db.WebhookEndpoints.Where(w => w.Status != "disabled" && (endpointId == null || w.Id == endpointId)).ToListAsync();
+            var endpoints = (await db.WebhookEndpoints.Where(w => w.Status != "disabled" && (endpointId == null || w.Id == endpointId)).ToListAsync())
+                .Where(w => endpointId != null || OutboxProcessor.Matches(w.EnabledEventsCsv, e.Type)).ToList();
             var deliveries = await uow.Run(async () =>
             {
                 // Replays keep the original event id but get a fresh delivery id (§132).
