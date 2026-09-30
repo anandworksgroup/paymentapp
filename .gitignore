@@ -1,0 +1,31 @@
+# .NET
+bin/
+obj/
+*.user
+TestResults/
+# local databases
+*.db
+*.db-wal
+*.db-shm
+backend/src/PaymentApp.Api/data/
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+.env*.local
+# Flutter
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+mobile/android/local.properties
+mobile/android/key.properties
+*.jks
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
