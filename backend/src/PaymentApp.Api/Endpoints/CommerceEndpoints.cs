@@ -10,7 +10,8 @@ using PaymentApp.Api.Modules.Payments;
 
 namespace PaymentApp.Api.Endpoints;
 
-public record ProductRequest(string? Name, string? Description, string? Type, string? TaxCategory, string? DeliveryType, string? ImageUrl, string? Features, string? Status, Dictionary<string, string>? Metadata);
+public record ProductRequest(string? Name, string? Description, string? Type, string? TaxCategory, string? DeliveryType, string? ImageUrl, string? Features, string? Status, Dictionary<string, string>? Metadata, string? Brand = null);
+public record BrandRequest(string? Name, string? LogoUrl, string? Color, string? SupportEmail, string? Website, bool? Active);
 public record PriceRequest(string ProductId, string Currency, string Type, string? Scheme, long UnitAmount, List<PriceTier>? Tiers, string? TiersMode, long? PackageSize,
     string? Interval, int? IntervalCount, int? TrialDays, string? UsageType, string? MeterId, long? CreditsGranted, long? MinimumAmount, long? MaximumAmount,
     string? TaxBehavior, Dictionary<string, long>? CountryAmounts, string? Nickname, Dictionary<string, string>? Metadata);
@@ -64,6 +65,7 @@ public static class CommerceEndpoints
                     Id = Ids.New("prod"), CreatedAt = uow.Now, UpdatedAt = uow.Now, Name = r.Name.Trim(), Description = r.Description, Type = r.Type ?? "saas",
                     TaxCategory = r.TaxCategory ?? "digital_service", DeliveryType = r.DeliveryType ?? "access", ImageUrl = r.ImageUrl, FeaturesCsv = r.Features,
                     Status = r.Status is "draft" ? "draft" : "active", MetadataJson = r.Metadata == null ? null : Json.Serialize(r.Metadata),
+                    BrandId = r.Brand == null ? null : (await db.Brands.FirstOrDefaultAsync(b => b.Id == r.Brand) ?? throw ApiException.NotFound("brand")).Id,
                 };
                 db.Products.Add(p);
                 uow.Emit("product.created", p);
@@ -81,6 +83,7 @@ public static class CommerceEndpoints
                 var before = new { p.Name, p.Status, p.TaxCategory };
                 p.Name = r.Name ?? p.Name; p.Description = r.Description ?? p.Description; p.ImageUrl = r.ImageUrl ?? p.ImageUrl;
                 p.TaxCategory = r.TaxCategory ?? p.TaxCategory; p.FeaturesCsv = r.Features ?? p.FeaturesCsv; p.Type = r.Type ?? p.Type;
+                if (r.Brand != null) p.BrandId = r.Brand == "" ? null : (await db.Brands.FirstOrDefaultAsync(b => b.Id == r.Brand) ?? throw ApiException.NotFound("brand")).Id;
                 if (r.Metadata != null) p.MetadataJson = Json.Serialize(r.Metadata);
                 if (r.Status != null)
                 {
@@ -169,6 +172,36 @@ public static class CommerceEndpoints
             var p = await db.Prices.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("price");
             var quantities = (req.Query["quantities"].FirstOrDefault() ?? "1,10,100,1000,10000").Split(',').Select(long.Parse);
             return new { price = p.Id, currency = p.Currency, amounts = quantities.Select(q => new { quantity = q, amount = PricingEngine.Amount(p, q, req.Query["country"].FirstOrDefault()) }) };
+        });
+
+        // ───────── Brands (§102) ─────────
+        v1.MapGet("/brands", async (RequestContext ctx, AppDb db) => { ctx.RequireOrg("products.read"); return new { @object = "list", data = await db.Brands.OrderBy(b => b.Name).ToListAsync() }; });
+        v1.MapPost("/brands", async (BrandRequest r, RequestContext ctx, AppDb db, Uow uow) =>
+        {
+            ctx.RequireOrg("org.manage");
+            if (string.IsNullOrWhiteSpace(r.Name)) throw ApiException.Invalid("name is required.");
+            if (r.Color != null && !System.Text.RegularExpressions.Regex.IsMatch(r.Color, "^#[0-9a-fA-F]{6}$")) throw ApiException.Invalid("color must be a #RRGGBB hex value.");
+            return Results.Json(await uow.Run(async () =>
+            {
+                var b = new Brand { Id = Ids.New("brand"), CreatedAt = uow.Now, Name = r.Name.Trim(), LogoUrl = r.LogoUrl, Color = r.Color, SupportEmail = r.SupportEmail, Website = r.Website };
+                db.Brands.Add(b);
+                uow.Audit("brand.create", "brand", b.Id, after: new { b.Name });
+                await Task.CompletedTask;
+                return b;
+            }), statusCode: 201);
+        });
+        v1.MapPatch("/brands/{id}", async (string id, BrandRequest r, RequestContext ctx, AppDb db, Uow uow) =>
+        {
+            ctx.RequireOrg("org.manage");
+            return await uow.Run(async () =>
+            {
+                var b = await db.Brands.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("brand");
+                b.Name = r.Name ?? b.Name; b.LogoUrl = r.LogoUrl ?? b.LogoUrl; b.Color = r.Color ?? b.Color; b.SupportEmail = r.SupportEmail ?? b.SupportEmail;
+                b.Website = r.Website ?? b.Website; b.Active = r.Active ?? b.Active;
+                uow.Audit("brand.update", "brand", b.Id);
+                await Task.CompletedTask;
+                return b;
+            });
         });
 
         // ───────── Coupons & promotions (§49, §50) ─────────
@@ -620,10 +653,12 @@ public static class CommerceEndpoints
         var caps = s.Country == null ? null : await db.Countries.FirstOrDefaultAsync(c => c.Country == s.Country);
         var terms = await db.LegalDocuments.Where(d => d.Key == "terms").OrderByDescending(d => d.Version).FirstOrDefaultAsync();
         var coupon = s.CouponId == null ? null : await db.Coupons.FirstOrDefaultAsync(c => c.Id == s.CouponId);
+        var brandIds = products.Values.Select(p => p.BrandId).Distinct().ToList();
+        var brand = brandIds.Count == 1 && brandIds[0] != null ? await db.Brands.FirstOrDefaultAsync(b => b.Id == brandIds[0] && b.Active) : null;
         return new
         {
             id = s.Id, @object = "checkout_session", s.Status, s.Mode, s.Livemode, s.Currency, s.Country, s.CustomerEmail,
-            merchant = new { name = org.Name, brand_color = org.BrandColor, logo_url = org.LogoUrl, support_email = org.SupportEmail },
+            merchant = new { name = brand?.Name ?? org.Name, brand_color = brand?.Color ?? org.BrandColor, logo_url = brand?.LogoUrl ?? org.LogoUrl, support_email = brand?.SupportEmail ?? org.SupportEmail, legal_name = org.Name },
             // The platform sells as Merchant of Record; checkout must show the legal seller (§225).
             seller_of_record = "Global Monetization Platform (sandbox) as Merchant of Record",
             line_items = s.LineItems.Select(l => new

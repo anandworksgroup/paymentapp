@@ -92,4 +92,19 @@ public class RetentionExperimentTests(ApiFactory f) : IClassFixture<ApiFactory>
         var after = (await buyer.Post($"/v1/public/links/{link["id"]}"))["checkout_session"]!.GetValue<string>();
         Assert.Null(f.WithDb(db => db.CheckoutSessions.First(s => s.Id == after).ExperimentVariant));
     }
+
+    [Fact]
+    public async Task Checkout_presents_the_product_brand()
+    {
+        var (merchant, _, _, _) = await Scenario.ApprovedMerchant(f, _http, "brands@acme.test", "Holding Co");
+        var brand = await merchant.Post("/v1/brands", new { name = "Pixel Studio", color = "#7DBB78", support_email = "help@pixel.example" }, 201);
+        await merchant.Post("/v1/brands", new { name = "Bad", color = "green" }, 400);
+        var product = await merchant.Post("/v1/products", new { name = "Icons", brand = brand["id"]!.GetValue<string>() }, 201);
+        var price = await merchant.Post("/v1/prices", new { product_id = product["id"]!.GetValue<string>(), currency = "USD", type = "one_time", unit_amount = 1500 }, 201);
+        var session = await merchant.Post("/v1/checkout/sessions", new { mode = "payment", line_items = new[] { new { price_id = price["id"]!.GetValue<string>(), quantity = 1 } } }, 201);
+        var view = await new Api(_http).Get($"/v1/public/checkout/{session["id"]}");
+        Assert.Equal("Pixel Studio", view["merchant"]!["name"]!.GetValue<string>());
+        Assert.Equal("#7DBB78", view["merchant"]!["brand_color"]!.GetValue<string>());
+        Assert.Equal("Holding Co", view["merchant"]!["legal_name"]!.GetValue<string>());
+    }
 }
