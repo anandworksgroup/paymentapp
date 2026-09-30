@@ -293,8 +293,16 @@ public class CheckoutService(AppDb db, Uow uow, CheckoutCalculator calc, Payment
         {
             // One payment in flight per session: concurrent confirms (double-clicks, retried requests with
             // new keys) are refused rather than charging twice (§151).
-            if (s.ProcessingUntil > uow.Now) throw ApiException.Conflict("checkout_in_progress", "A payment for this checkout is already being processed.");
-            s.ProcessingUntil = uow.Now.AddMinutes(2);
+            // The claim is a conditional UPDATE inside the write transaction: the session entity was read before
+            // the transaction started and may be stale, so it can't be trusted to see another request's lock.
+            var now = uow.Now;
+            var until = now.AddMinutes(2);
+            var claimed = await db.CheckoutSessions.Where(x => x.Id == s.Id && x.Status == "open" && (x.ProcessingUntil == null || x.ProcessingUntil <= now))
+                .ExecuteUpdateAsync(u => u.SetProperty(x => x.ProcessingUntil, until));
+            if (claimed == 0) throw ApiException.Conflict("checkout_in_progress", "A payment for this checkout is already being processed or has completed.");
+            var entry = db.Entry(s).Property(x => x.ProcessingUntil);
+            entry.CurrentValue = until;
+            entry.OriginalValue = until;
             // A new attempt supersedes an abandoned 3-D Secure challenge, which can then no longer complete.
             foreach (var stale in await db.Payments.Where(p => p.CheckoutSessionId == s.Id && p.Status == "REQUIRES_ACTION").ToListAsync())
             {

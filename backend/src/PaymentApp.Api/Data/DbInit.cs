@@ -36,12 +36,30 @@ public static class DbInit
 
     /// <summary>
     /// Development convenience: EnsureCreated doesn't evolve an existing SQLite file, so additive model
-    /// changes (new nullable/defaulted columns) are applied in place. Production uses real migrations.
+    /// changes (new tables, new nullable/defaulted columns) are applied in place. Production uses real migrations.
     /// </summary>
     private static async Task AddMissingColumns(AppDb db)
     {
         var conn = db.Database.GetDbConnection();
         if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
+        // New tables (and their indexes) come from EF's own create script, filtered to what's missing.
+        var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table'";
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) tables.Add(reader.GetString(0));
+        }
+        var missing = db.Model.GetEntityTypes().Select(e => e.GetTableName()!).Where(t => !tables.Contains(t)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (missing.Count > 0)
+            foreach (var statement in db.Database.GenerateCreateScript().Split(";", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var target = System.Text.RegularExpressions.Regex.Match(statement, @"^CREATE (?:TABLE|(?:UNIQUE )?INDEX \S+ ON) ""([^""]+)""");
+                if (!target.Success || !missing.Contains(target.Groups[1].Value)) continue;
+                await using var create = conn.CreateCommand();
+                create.CommandText = statement;
+                await create.ExecuteNonQueryAsync();
+            }
         foreach (var entity in db.Model.GetEntityTypes())
         {
             var table = entity.GetTableName()!;

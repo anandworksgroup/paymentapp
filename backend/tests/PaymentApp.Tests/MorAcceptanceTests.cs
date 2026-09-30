@@ -341,14 +341,17 @@ public class MorAcceptanceTests(ApiFactory f) : IClassFixture<ApiFactory>
     public async Task Concurrent_confirms_on_one_session_charge_at_most_once()
     {
         var (merchant, _, _, priceId) = await Scenario.ApprovedMerchant(f, _http, "race@acme.test", "Race Co");
-        var session = await merchant.Post("/v1/checkout/sessions", new { mode = "payment", line_items = new[] { new { price_id = priceId, quantity = 1 } } }, 201);
-        var sid = session["id"]!.GetValue<string>();
-        var tokens = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Scenario.Card(merchant)));
         var buyer = new Api(_http);
-        var results = await Task.WhenAll(tokens.Select((t, i) => buyer.Send(HttpMethod.Post, $"/v1/public/checkout/{sid}/confirm",
-            new { email = "race@example.com", country = "US", token = t, accept_terms = true }, $"race-{i}")));
-        Assert.All(results, r => Assert.True((int)r.Status is 200 or 409, r.Body?.ToJsonString()));
-        Assert.Equal(1, f.WithDb(db => db.Payments.Count(p => p.CheckoutSessionId == sid && p.AmountCaptured > 0)));
+        for (var round = 0; round < 5; round++)
+        {
+            var session = await merchant.Post("/v1/checkout/sessions", new { mode = "payment", line_items = new[] { new { price_id = priceId, quantity = 1 } } }, 201);
+            var sid = session["id"]!.GetValue<string>();
+            var tokens = await Task.WhenAll(Enumerable.Range(0, 6).Select(_ => Scenario.Card(merchant)));
+            var results = await Task.WhenAll(tokens.Select((t, i) => buyer.Send(HttpMethod.Post, $"/v1/public/checkout/{sid}/confirm",
+                new { email = "race@example.com", country = "US", token = t, accept_terms = true }, $"race-{round}-{i}")));
+            Assert.All(results, r => Assert.True((int)r.Status is 200 or 409, r.Body?.ToJsonString()));
+            Assert.Equal(1, f.WithDb(db => db.Payments.Count(p => p.CheckoutSessionId == sid && p.AmountCaptured > 0)));
+        }
     }
 
     [Fact]

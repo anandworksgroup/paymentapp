@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PaymentApp.Api.Common;
+using PaymentApp.Api.Modules.Marketplace;
+using PaymentApp.Api.Modules.Operations;
 using PaymentApp.Api.Infrastructure;
 using PaymentApp.Api.Modules.Billing;
 using PaymentApp.Api.Modules.Checkout;
@@ -184,6 +186,31 @@ public static class DemoSeed
             return sub;
         });
 
+        // ───── Marketplace sellers, a duplicate customer, a pending domain ─────
+        clock.Offset = TimeSpan.FromDays(-15);
+        var sellerIds = new List<string>();
+        foreach (var (sName, sEmail, sCountry, bank) in new[] { ("Nordic Templates Co", "hello@nordictemplates.example", "SE", "SE4550000000058398257466"), ("Pixel & Prose", "studio@pixelprose.example", "GB", "GB29NWBK60161331926819") })
+        {
+            var seller = await As(root, owner, org.Id, sp => sp.GetRequiredService<MarketplaceService>().Onboard(org.Id, sName, sEmail, sCountry, "USD", 1500));
+            await As(root, owner, org.Id, sp => sp.GetRequiredService<MarketplaceService>().SetPayoutAccount(seller.Id, "Demo Bank", "USD", bank));
+            sellerIds.Add(seller.Id);
+        }
+        for (var i = 0; i < 8; i++)
+        {
+            clock.Offset = TimeSpan.FromDays(-15 + i) + TimeSpan.FromHours(rng.Next(10));
+            var name = names[rng.Next(names.Length)];
+            await Checkout(root, owner, org.Id, "payment", ids.Templates, 1, countries[rng.Next(countries.Length)], $"market.{i}@example.com", name, "4242424242424242", null, sellerIds[i % 2]);
+        }
+        clock.Offset = TimeSpan.FromDays(-6);
+        await Checkout(root, owner, org.Id, "payment", ids.CreditPack, 1, "US", "jordan.lee@example.com", "Jordan Lee", "4242424242424242", null);
+        await As(root, owner, org.Id, async sp =>
+        {
+            var uow = sp.GetRequiredService<Uow>();
+            // Same person signed up again with a different spelling — shows up under "possible duplicates".
+            await uow.Run(async () => { sp.GetRequiredService<AppDb>().Customers.Add(new Customer { Id = Ids.New("cus"), CreatedAt = uow.Now, UpdatedAt = uow.Now, Email = "Jordan.Lee@example.com", Name = "Jordan L.", Phone = "+1 555 0142", Country = "US" }); await Task.CompletedTask; });
+            return await sp.GetRequiredService<DomainService>().Add("pay.acme-writer.example", "checkout");
+        });
+
         // Renewals, dunning, settlement and a payout — run the jobs as of "now".
         clock.Offset = TimeSpan.Zero;
         await RunJobs(root);
@@ -193,6 +220,7 @@ public static class DemoSeed
             await t.Settle(DateTime.UtcNow);
             try { return await t.CreatePayout(org.Id, false, "USD", null, automatic: false); } catch (ApiException) { return null; }
         });
+        await As(root, owner, org.Id, async sp => { try { return await sp.GetRequiredService<MarketplaceService>().CreatePayout(sellerIds[0], false, "USD"); } catch (ApiException) { return null; } });
         await RunJobs(root);
 
         // ───── Wallet users & AML patterns ─────
@@ -297,6 +325,27 @@ public static class DemoSeed
         }
         clock.Offset = TimeSpan.Zero;
 
+        // ───── Support and incidents ─────
+        var supportStaff = users["support@demo.test"];
+        await WithDb(root, async db =>
+        {
+            var now = DateTime.UtcNow;
+            var t = new SupportTicket { Id = Ids.New("tkt"), CreatedAt = now.AddDays(-2), UpdatedAt = now.AddDays(-1), OrgId = org.Id, CreatedByUserId = owner.Id, Subject = "German VAT on a B2B order", Category = "tax_issue", Status = "awaiting_merchant", AssignedTo = supportStaff.Id };
+            db.SupportTickets.Add(t);
+            db.TicketMessages.Add(new TicketMessage { Id = Ids.New("tmsg"), CreatedAt = now.AddDays(-2), TicketId = t.Id, AuthorId = owner.Id, AuthorType = "merchant", Body = "A customer in Germany says they gave a VAT ID but were still charged VAT. Can you check?" });
+            db.TicketMessages.Add(new TicketMessage { Id = Ids.New("tmsg"), CreatedAt = now.AddDays(-1).AddHours(-2), TicketId = t.Id, AuthorId = supportStaff.Id, AuthorType = "staff", Internal = true, Body = "Checked: the VAT ID failed format validation at checkout, so B2C treatment applied. Correct behaviour." });
+            db.TicketMessages.Add(new TicketMessage { Id = Ids.New("tmsg"), CreatedAt = now.AddDays(-1), TicketId = t.Id, AuthorId = supportStaff.Id, AuthorType = "staff", Body = "The VAT ID entered didn't pass validation, so VAT was charged. If the customer sends a valid ID we can issue a credit note — reply with the order number." });
+            var resolved = new Incident { Id = Ids.New("inc"), CreatedAt = now.AddDays(-5), Title = "Elevated card declines on Simulator Alpha", Severity = "major", Status = "resolved", AffectedServicesCsv = "payments,checkout", CustomerImpact = "Some card payments were declined and retried on the backup provider.", StartedAt = now.AddDays(-5), ResolvedAt = now.AddDays(-5).AddHours(2), CreatedBy = supportStaff.Id };
+            var active = new Incident { Id = Ids.New("inc"), CreatedAt = now.AddHours(-3), Title = "Delayed webhook deliveries", Severity = "minor", Status = "monitoring", AffectedServicesCsv = "webhooks", CustomerImpact = "Webhook events may arrive up to 10 minutes late. No events are lost.", StartedAt = now.AddHours(-3), CreatedBy = supportStaff.Id };
+            db.Incidents.AddRange(resolved, active);
+            db.IncidentUpdates.AddRange(
+                new IncidentUpdate { Id = Ids.New("incu"), CreatedAt = resolved.StartedAt, IncidentId = resolved.Id, Status = "investigating", Message = "We're seeing more declines than usual on one provider.", AuthorId = supportStaff.Id },
+                new IncidentUpdate { Id = Ids.New("incu"), CreatedAt = resolved.ResolvedAt!.Value, IncidentId = resolved.Id, Status = "resolved", Message = "Provider recovered; routing back to normal.", AuthorId = supportStaff.Id },
+                new IncidentUpdate { Id = Ids.New("incu"), CreatedAt = active.StartedAt, IncidentId = active.Id, Status = "investigating", Message = "Webhook queue is backing up.", AuthorId = supportStaff.Id },
+                new IncidentUpdate { Id = Ids.New("incu"), CreatedAt = now.AddHours(-1), IncidentId = active.Id, Status = "monitoring", Message = "Fix deployed; the backlog is draining.", AuthorId = supportStaff.Id });
+            await db.SaveChangesAsync();
+        });
+
         // Created last so seeding doesn't queue hundreds of deliveries to a listener that isn't running.
         await As(root, owner, org.Id, async sp => (await sp.GetRequiredService<MerchantService>().CreateWebhook("http://localhost:4242/webhooks", "payment.*,subscription.*,invoice.*,refund.*,dispute.*,payout.*", "Local dev listener (start one with the CLI or any HTTP server)", false)).Endpoint);
 
@@ -338,13 +387,13 @@ public static class DemoSeed
         });
     }
 
-    private static async Task<string?> Checkout(IServiceProvider root, User owner, string orgId, string mode, string priceId, long qty, string country, string email, string name, string card, string? coupon)
+    private static async Task<string?> Checkout(IServiceProvider root, User owner, string orgId, string mode, string priceId, long qty, string country, string email, string name, string card, string? coupon, string? sellerId = null)
     {
         var token = await Token(root, card);
         return await As(root, owner, orgId, async sp =>
         {
             var checkout = sp.GetRequiredService<CheckoutService>();
-            var s = await checkout.Create(mode, [new LineRequest(priceId, qty)], null, email, country, coupon, "https://acme-writer.example/thanks", null, null, null, null);
+            var s = await checkout.Create(mode, [new LineRequest(priceId, qty)], null, email, country, coupon, "https://acme-writer.example/thanks", null, null, null, null, sellerId: sellerId);
             var ctx = sp.GetRequiredService<RequestContext>();
             ctx.Ip = $"203.0.113.{Random.Shared.Next(1, 250)}";
             dynamic r = await checkout.Confirm(s, new ConfirmRequest(email, name, country, null, null, "b2c", token, true, coupon), ctx);

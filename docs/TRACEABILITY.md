@@ -73,7 +73,7 @@ UI coverage per area is in the last section.
 | §28-§29, §249 | Usage events: dedupe, late, corrections, batch | Built | |
 | §245-§246 | Customer budgets and hard caps with threshold alerts | Built | |
 | §247-§248 | AI token / model billing | Built | Meters plus tiered prices per metric |
-| §30, §242 | Credits ledger with atomic consumption | Built | Automatic FIFO expiry of grants is not built (manual `expire` only) |
+| §30, §242 | Credits ledger with atomic consumption, expiring grants | Built | Soonest-expiring lot is spent first; the scheduled job expires only the unused part; OperationsTests |
 | §31, §123, §180 | Invoices, B2B net terms, PO, credit limits, deterministic PDF | Built | |
 | §255 | Invoice reminders | Built | |
 | §251 | Workspace-level billing | Not built | |
@@ -96,10 +96,10 @@ UI coverage per area is in the last section.
 | §121 | Configurable, versioned fee schedules | Built | |
 | §42, §155, §228 | Provider reconciliation and exceptions | Built | |
 | §229 | Bank-statement reconciliation | Partial | Payout rail outcome only |
-| §230-§231 | Accounting close / period lock | Not built | |
+| §230-§231 | Accounting close / period lock | Built | `PeriodCloseService`: blocking checklist, SHA-256 snapshot of closing balances + statements, re-verify; append-only ledger means closed months can't change; OperationsTests |
 | §99 | Accounting export | Built | Balanced journal JSON/CSV. Native QuickBooks/Xero connectors are not built |
 | §263 | Revenue recognition | Built | Ratable report; not booked in the GL |
-| §101 | Marketplace split settlement | Not built | Ledger owner types allow adding seller accounts later |
+| §101 | Marketplace split settlement | Built | `MarketplaceService`: seller onboarding with screening, per-sale split in the ledger, refund/chargeback clawback (reversed when a dispute is won), seller settlement and payouts; OperationsTests |
 
 ## Platform and developer
 
@@ -120,12 +120,12 @@ UI coverage per area is in the last section.
 | §74, §299 | Privacy: export, anonymize | Built | Formal request-workflow tracking not built |
 | §115 | Configurable retention | Not built | |
 | §46-§47, §109, §169, §325-§327 | AI copilot (grounded tools, drafts need confirmation, data-used trace) | Built | Needs an Anthropic API key; the AI developer assistant and revenue-optimization recommendations are not built |
-| §119 | Feature flags | Not built | |
-| §110-§111 | Support tickets, incident management | Not built | |
+| §119 | Feature flags | Built | Environment, org allow-list, country, deterministic % rollout; gates marketplace, domains, copilot; audited admin edits; OperationsTests |
+| §110-§111 | Support tickets, incident management | Built | Tickets with staff-only internal notes and account context; incidents with updates, merchant banner feed and public status; OperationsTests |
 | §173 | SSO/SAML, SCIM, custom roles | Not built | |
-| §176-§177 | Custom domains / DNS validation | Not built | |
-| §187-§189 | Imports / migration wizard | Not built | |
-| §186 | Customer merge | Not built | |
+| §176-§177 | Custom domains / DNS validation | Partial | DNS TXT challenge verification is built and tested; serving pages on the custom host needs edge/TLS setup in production |
+| §187-§189 | Imports / migration wizard | Built | CSV (RFC 4180) / JSON customers and products; row-level preview (valid / invalid / duplicate) before commit; OperationsTests |
+| §186 | Customer merge | Built | Moves history; credits move by paired ledger entries; tombstone with `merged_into_id`; duplicate candidates endpoint; OperationsTests |
 | §93-§94 | Observability, alerting | Partial | Structured logs, request IDs, API logs, system-health endpoint. No metrics or tracing export |
 
 ## Global Wallet (URS part 2)
