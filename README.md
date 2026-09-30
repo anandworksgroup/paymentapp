@@ -90,8 +90,10 @@ Set `Anthropic:ApiKey` (or `ANTHROPIC_API_KEY`) for the API. The copilot uses `c
 ## Tests
 
 ```bash
-dotnet test backend/PaymentApp.slnx      # 53 unit + end-to-end acceptance tests
+dotnet test backend/PaymentApp.slnx      # 57 unit + end-to-end acceptance tests
 cd sdk/typescript && npm install && npm run build && npm test
+cd mobile && flutter analyze && flutter test     # 50 tests
+cd web && npx tsc --noEmit && npx eslint app components lib && npx next build
 ```
 
 The acceptance tests drive the real HTTP API end to end and assert the financial invariants after each flow:

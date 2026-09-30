@@ -160,4 +160,19 @@ UI coverage per area is in the last section.
 
 ## User interfaces
 
-Built by parallel agents: the Next.js web app (merchant dashboard, hosted checkout, payment links, customer portal and admin console) and the Flutter app (business mode + wallet mode). All use the reference design in `docs/DESIGN.md`. Screen-level coverage is recorded in the web and mobile READMEs once each agent's verification report is in.
+All surfaces use the reference design in `docs/DESIGN.md`: Inter, sage canvas, lemon/peach chips, pill-bar charts and large light numerals with a currency code. They read real API data only (§334).
+
+| Surface | URS | Built | Verified by |
+|---|---|---|---|
+| Merchant web (`web/app/(merchant)`) | §10, §213-§224, §321-§325, §331 | Every §331 navigation section: dashboard + attention center, sales, billing, customers, catalog, finance, tax, disputes, analytics, developers, settings/verification/go-live, copilot, Ctrl+K palette, role-aware actions | tsc, eslint, `next build`; browser walkthroughs (pay via link, 3-D Secure, re-quote by country, partial refund with step-up, API key, webhook test, proration preview, support-role hiding) |
+| Hosted checkout / payment links / customer portal | §15-§16, §24, §48, §87-§90 | Card and UPI via sandbox tokenization; 3-D Secure; async payments; receipt; portal subscriptions, invoices (PDF), payment methods | Browser at 375px and desktop |
+| Admin & compliance console (`web/app/admin`) | Part 2 §72-§193, §333 | Overview, merchants, users (masked, timeline, fund-flow graph, network), transfers + trace, money movement, alerts, cases, approvals, screening, ledger, reconciliation, payouts, providers, configuration, audit logs, system health | Browser per role (support, auditor, analyst, finance, compliance); four-eyes release; self-approval refused; recon run; integrity check |
+| Flutter app (`mobile/`) | §11, §86, §125-§126, §210-§212; part 2 §182-§186, §221 | Business mode (dashboard, payments + refunds, customers, subscriptions, payouts, disputes, links + QR, analytics, notifications, security); wallet mode (KYC, stacked balances, add money, send with FX quote, receive QR, withdraw, activity) | `flutter analyze` clean; 50 tests; web build exercised at phone size; debug APK built (not installed) |
+
+**Known UI limits:**
+- iOS screenshot protection is a TODO.
+- Biometrics are untested on a device.
+- There are no push notifications (in-app feed only) and no home-screen widgets (§126).
+- The analytics 12-month view is daily bars.
+- Admin country flows aggregate at most 1,000 transfers client-side.
+- The embeddable checkout widget is not built.
