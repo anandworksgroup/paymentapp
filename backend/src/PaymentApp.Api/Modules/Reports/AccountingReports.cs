@@ -175,6 +175,7 @@ public class AccountingReports(AppDb db)
             voluntary = voluntary.Count, involuntary = involuntary.Count,
             mrr_at_start = startMrr, mrr_lost = lostMrr, revenue_churn_pct = Pct(lostMrr, startMrr),
             reasons = cancelled.GroupBy(s => s.CancellationReason ?? "unspecified").Select(g => new { reason = g.Key, count = g.Count() }),
+            retention_saves = await db.Events.CountAsync(e => e.Type == "subscription.retained" && e.CreatedAt >= from && e.CreatedAt < to && e.OrgId == db.Tenant.OrgId && e.Livemode == db.Tenant.Livemode),
             definitions = new
             {
                 logo_churn = "Subscriptions active at period start that were cancelled during the period ÷ subscriptions active at start.",

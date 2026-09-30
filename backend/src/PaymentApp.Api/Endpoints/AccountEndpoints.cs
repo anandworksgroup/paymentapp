@@ -16,7 +16,7 @@ public record ProfileRequest(string? Name, string? Phone, string? Country);
 public record KycRequest(string FullName, string DateOfBirth, string Country, string Address, string DocumentType, int Level = 1);
 public record OrgRequest(string Name, string Country, string? Currency);
 public record OrgSettingsRequest(string? Name, string? SupportEmail, string? Website, string? BrandColor, string? LogoUrl, string? PayoutSchedule,
-    string? DunningRetryDaysCsv, string? DunningFinalAction, int? DunningGraceDays, string? InvoicePrefix);
+    string? DunningRetryDaysCsv, string? DunningFinalAction, int? DunningGraceDays, string? InvoicePrefix, string? RetentionCoupon = null, bool? RetentionOfferPause = null);
 public record MemberRequest(string Email, string Role);
 public record ApplicationRequest(string? LegalName, string? TradingName, string? Website, string? BusinessType, string? Industry, string? Country,
     string? RegisteredAddress, string? OperatingAddress, string? RegistrationNumber, string? TaxNumber, string? ContactPhone, string? ProductDescription,
@@ -160,6 +160,10 @@ public static class AccountEndpoints
                     o.DunningFinalAction = r.DunningFinalAction;
                 }
                 if (r.DunningGraceDays != null) o.DunningGraceDays = Math.Clamp(r.DunningGraceDays.Value, 0, 30);
+                if (r.RetentionCoupon != null)
+                    o.RetentionCouponId = r.RetentionCoupon == "" ? null
+                        : (await db.Coupons.FirstOrDefaultAsync(c => c.Code == r.RetentionCoupon.ToUpperInvariant() && c.Active) ?? throw ApiException.NotFound("coupon")).Id;
+                if (r.RetentionOfferPause != null) o.RetentionOfferPause = r.RetentionOfferPause.Value;
                 uow.Audit("organization.update", "organization", o.Id, before, new { o.Name, o.PayoutSchedule, o.DunningRetryDaysCsv, o.DunningFinalAction });
                 await Task.CompletedTask;
                 return o;

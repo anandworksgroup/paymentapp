@@ -9,6 +9,7 @@ namespace PaymentApp.Api.Endpoints;
 
 public record AffiliateRequest(string Name, string Email, string Code, string CommissionType, int? RateBps, long? FixedAmount, string? FixedCurrency, string? Duration, int? DurationMonths, int? HoldDays);
 public record BudgetRequest(string? EventName, long MonthlyLimit, string? Mode, string? Thresholds);
+public record ExperimentRequest(string Name, string PaymentLink, List<ExperimentVariant> Variants, string? Hypothesis);
 
 /// <summary>Files, affiliates, usage budgets, finance reports and privacy exports.</summary>
 public static class GrowthEndpoints
@@ -217,6 +218,94 @@ public static class GrowthEndpoints
             return await reports.Churn(from, to, Money.Normalize(currency));
         });
 
+        // ───────── Checkout experiments (§108) ─────────
+        var exp = app.MapGroup("/v1/experiments").WithTags("Experiments");
+        exp.MapGet("/", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("analytics.read"); return await Paging.List(db.Experiments, req); });
+        exp.MapPost("/", async (ExperimentRequest r, RequestContext ctx, AppDb db, Uow uow) =>
+        {
+            ctx.RequireOrg("checkout.write");
+            var link = await db.PaymentLinks.FirstOrDefaultAsync(l => l.Id == r.PaymentLink) ?? throw ApiException.NotFound("payment link");
+            if (r.Variants.Count is < 2 or > 5) throw ApiException.Invalid("An experiment needs 2-5 variants; the first is the control.");
+            if (r.Variants.Select(v => v.Key).Distinct().Count() != r.Variants.Count || r.Variants.Any(v => string.IsNullOrWhiteSpace(v.Key) || v.Weight < 1))
+                throw ApiException.Invalid("Variant keys must be unique and weights positive.");
+            var basePrice = await db.Prices.FirstAsync(p => p.Id == link.PriceId);
+            foreach (var v in r.Variants)
+            {
+                if (v.PriceId != null)
+                {
+                    var p = await db.Prices.FirstOrDefaultAsync(x => x.Id == v.PriceId && x.Active) ?? throw ApiException.NotFound($"price {v.PriceId}");
+                    if (p.Type != basePrice.Type) throw ApiException.Invalid("Variant prices must have the same type (one-time vs recurring) as the link price.");
+                }
+                v.CouponCode = v.CouponCode?.ToUpperInvariant();
+                if (v.CouponCode != null && !await db.Coupons.AnyAsync(c => c.Code == v.CouponCode && c.Active)) throw ApiException.NotFound($"coupon {v.CouponCode}");
+            }
+            return Results.Json(await uow.Run(async () =>
+            {
+                var e = new Experiment { Id = Ids.New("exp"), CreatedAt = uow.Now, Name = r.Name, PaymentLinkId = link.Id, VariantsJson = Json.Serialize(r.Variants), Hypothesis = r.Hypothesis };
+                db.Experiments.Add(e);
+                uow.Audit("experiment.create", "experiment", e.Id, after: new { r.Name, link = link.Id, variants = r.Variants.Count });
+                await Task.CompletedTask;
+                return e;
+            }), statusCode: 201);
+        });
+        exp.MapPost("/{id}/start", async (string id, RequestContext ctx, AppDb db, Uow uow) =>
+        {
+            ctx.RequireOrg("checkout.write");
+            return await uow.Run(async () =>
+            {
+                var e = await db.Experiments.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("experiment");
+                if (e.Status != "draft") throw ApiException.Conflict("invalid_state", $"Experiment is {e.Status}.");
+                if (await db.Experiments.AnyAsync(x => x.PaymentLinkId == e.PaymentLinkId && x.Status == "running")) throw ApiException.Conflict("experiment_running", "Another experiment is already running on this link.");
+                e.Status = "running";
+                e.StartedAt = uow.Now;
+                uow.Audit("experiment.start", "experiment", e.Id);
+                return e;
+            });
+        });
+        exp.MapPost("/{id}/stop", async (string id, RequestContext ctx, AppDb db, Uow uow) =>
+        {
+            ctx.RequireOrg("checkout.write");
+            return await uow.Run(async () =>
+            {
+                var e = await db.Experiments.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("experiment");
+                e.Status = "stopped";
+                e.StoppedAt = uow.Now;
+                uow.Audit("experiment.stop", "experiment", e.Id);
+                return e;
+            });
+        });
+        exp.MapGet("/{id}", async (string id, RequestContext ctx, AppDb db) =>
+        {
+            ctx.RequireOrg("analytics.read");
+            var e = await db.Experiments.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("experiment");
+            var prefix = e.Id + ":";
+            var sessions = await db.CheckoutSessions.Where(s => s.ExperimentVariant != null && s.ExperimentVariant.StartsWith(prefix)).ToListAsync();
+            var paymentIds = sessions.Where(s => s.PaymentId != null).Select(s => s.PaymentId).ToList();
+            var payments = await db.Payments.Where(p => paymentIds.Contains(p.Id) && p.AmountCaptured > 0).ToDictionaryAsync(p => p.Id);
+            var rows = e.Variants.Select(v =>
+            {
+                var mine = sessions.Where(s => s.ExperimentVariant == prefix + v.Key).ToList();
+                var converted = mine.Count(s => s.Status == "complete");
+                var revenue = mine.Where(s => s.PaymentId != null && payments.ContainsKey(s.PaymentId)).Sum(s => payments[s.PaymentId!].Amount - payments[s.PaymentId!].TaxAmount);
+                return (Variant: v, Visits: mine.Count, Converted: converted, Revenue: revenue);
+            }).ToList();
+            var control = rows[0];
+            return new
+            {
+                experiment = e,
+                results = rows.Select(r => new
+                {
+                    variant = r.Variant.Key, price_id = r.Variant.PriceId, coupon_code = r.Variant.CouponCode, visits = r.Visits, conversions = r.Converted,
+                    conversion_rate_pct = r.Visits == 0 ? 0 : Math.Round(r.Converted * 100.0 / r.Visits, 2),
+                    revenue_excluding_tax = r.Revenue, revenue_per_visit = r.Visits == 0 ? 0 : r.Revenue / r.Visits,
+                    lift_vs_control_pct = r.Variant.Key == control.Variant.Key || control.Visits == 0 || control.Converted == 0 ? (double?)null
+                        : Math.Round(((double)r.Converted / Math.Max(1, r.Visits) / ((double)control.Converted / control.Visits) - 1) * 100, 1),
+                    p_value = r.Variant.Key == control.Variant.Key ? null : TwoProportionP(control.Converted, control.Visits, r.Converted, r.Visits),
+                }),
+                reading_guide = "p < 0.05 suggests the difference is unlikely to be chance. Fix the sample size before starting and avoid stopping as soon as a result looks significant.",
+            };
+        });
+
         // ───────── Privacy (§74, §299) ─────────
         app.MapGet("/v1/customers/{id}/export", async (string id, RequestContext ctx, AppDb db, Uow uow) =>
         {
@@ -259,6 +348,26 @@ public static class GrowthEndpoints
             await uow.Run(async () => { uow.Audit("user.export", "user", u.Id, reason: "data subject access"); await Task.CompletedTask; });
             return export;
         }).WithTags("Me");
+    }
+
+    /// <summary>Two-sided two-proportion z-test.</summary>
+    public static double? TwoProportionP(int c1, int n1, int c2, int n2)
+    {
+        if (n1 < 1 || n2 < 1) return null;
+        var p = (double)(c1 + c2) / (n1 + n2);
+        var se = Math.Sqrt(p * (1 - p) * (1.0 / n1 + 1.0 / n2));
+        if (se == 0) return null;
+        var z = Math.Abs((double)c1 / n1 - (double)c2 / n2) / se;
+        return Math.Round(2 * (1 - NormalCdf(z)), 4);
+    }
+
+    private static double NormalCdf(double x)
+    {
+        // Abramowitz-Stegun 7.1.26 erf approximation (~1e-7), ample for reporting.
+        var u = x / Math.Sqrt(2);
+        var t = 1 / (1 + 0.3275911 * u);
+        var erf = 1 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.Exp(-u * u);
+        return 0.5 * (1 + erf);
     }
 
     private static async Task<object> Link(StoredFile f, FileService store, Uow uow)

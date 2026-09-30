@@ -26,6 +26,7 @@ public record QuoteRequest(string? Country, string? CustomerType, string? TaxId,
 public record AuthenticateRequest(string Result);
 public record TokenRequest(string Type, string? Number, int? ExpMonth, int? ExpYear, string? Cvc, string? Vpa);
 public record AttachPmRequest(string Token);
+public record PortalCancelRequest(string? Reason, string? Feedback, string? AcceptOffer);
 
 public static class CommerceEndpoints
 {
@@ -418,6 +419,18 @@ public static class CommerceEndpoints
                 throw new ApiException(410, "link_inactive", "This payment link is no longer active.");
             var price = await db.Prices.FirstAsync(p => p.Id == link.PriceId);
             var coupon = link.CouponId == null ? null : (await db.Coupons.FirstAsync(c => c.Id == link.CouponId)).Code;
+            // A/B test (§108): a running experiment on this link assigns a weighted variant per visit.
+            var experiment = await db.Experiments.FirstOrDefaultAsync(e => e.PaymentLinkId == link.Id && e.Status == "running");
+            string? variantTag = null;
+            if (experiment != null)
+            {
+                var variants = experiment.Variants;
+                var roll = Random.Shared.Next(variants.Sum(v => v.Weight));
+                var chosen = variants.First(v => (roll -= v.Weight) < 0);
+                if (chosen.PriceId != null) price = await db.Prices.FirstAsync(p => p.Id == chosen.PriceId);
+                if (chosen.CouponCode != null) coupon = chosen.CouponCode;
+                variantTag = $"{experiment.Id}:{chosen.Key}";
+            }
             link.Visits++;
             // Affiliate click tracking: /pay/{link}?ref=CODE (§51).
             var referral = req.Query["ref"].FirstOrDefault()?.Trim().ToUpperInvariant();
@@ -429,6 +442,7 @@ public static class CommerceEndpoints
             await db.SaveChangesAsync();
             var s = await checkout.Create(price.Type == "recurring" ? "subscription" : "payment", [new LineRequest(price.Id, link.Quantity)], null, null, null, coupon,
                 link.SuccessUrl, link.CancelUrl, link.Id, link.MetadataJson, null, referral);
+            if (variantTag != null) { s.ExperimentVariant = variantTag; await db.SaveChangesAsync(); }
             return new { checkout_session = s.Id, url = s.Url };
         });
         pub.MapGet("/links/{id}", async (string id, AppDb db) =>
@@ -493,13 +507,54 @@ public static class CommerceEndpoints
                 };
             }
         });
-        portal.MapPost("/subscriptions/{id}/cancel", async (string token, string id, AppDb db, IConfiguration config, IClock clock, BillingService billing) =>
+        // Cancellation with a retention step (§257): reasons, then an optional save offer, then cancel.
+        portal.MapGet("/subscriptions/{id}/cancel_options", async (string token, string id, AppDb db, IConfiguration config, IClock clock) =>
         {
             var (customer, scope) = await PortalToken.Resolve(token, db, config, clock);
             using (scope)
             {
-                _ = await db.Subscriptions.FirstOrDefaultAsync(s => s.Id == id && s.CustomerId == customer.Id) ?? throw ApiException.NotFound("subscription");
-                return await billing.Cancel(id, atPeriodEnd: true, "customer_portal");
+                var sub = await db.Subscriptions.FirstOrDefaultAsync(s => s.Id == id && s.CustomerId == customer.Id) ?? throw ApiException.NotFound("subscription");
+                var org = await db.Organizations.FirstAsync(o => o.Id == sub.OrgId);
+                var coupon = org.RetentionCouponId == null || sub.CouponId == org.RetentionCouponId ? null : await db.Coupons.FirstOrDefaultAsync(c => c.Id == org.RetentionCouponId && c.Active);
+                var offers = new List<object>();
+                if (coupon != null)
+                    offers.Add(new { type = "discount", coupon = coupon.Code, description = coupon.PercentOffBps is { } bps ? $"{bps / 100}% off" + (coupon.Duration == "repeating" ? $" for {coupon.DurationInMonths} months" : coupon.Duration == "forever" ? "" : " on your next invoice") : $"{Money.Format(coupon.AmountOff ?? 0, coupon.Currency ?? sub.Currency)} off" });
+                if (org.RetentionOfferPause && sub.Status == "ACTIVE") offers.Add(new { type = "pause", description = "Pause instead: no charges until you resume" });
+                return new { @object = "cancel_options", subscription = sub.Id, period_end = sub.CurrentPeriodEnd, reasons = CancelReasons, offers };
+            }
+        });
+        portal.MapPost("/subscriptions/{id}/cancel", async (string token, string id, PortalCancelRequest? r, AppDb db, IConfiguration config, IClock clock, BillingService billing, Uow uow) =>
+        {
+            var (customer, scope) = await PortalToken.Resolve(token, db, config, clock);
+            using (scope)
+            {
+                var sub = await db.Subscriptions.FirstOrDefaultAsync(s => s.Id == id && s.CustomerId == customer.Id) ?? throw ApiException.NotFound("subscription");
+                var reason = r?.Reason is { } given && CancelReasons.Contains(given) ? given : "customer_portal";
+                if (r?.AcceptOffer == "discount")
+                {
+                    var org = await db.Organizations.FirstAsync(o => o.Id == sub.OrgId);
+                    var coupon = await db.Coupons.FirstOrDefaultAsync(c => c.Id == org.RetentionCouponId && c.Active) ?? throw ApiException.Invalid("No discount offer is available.");
+                    return (object)await uow.Run(async () =>
+                    {
+                        sub.CouponId = coupon.Id;
+                        sub.CouponPeriodsUsed = 0;
+                        sub.CancelAtPeriodEnd = false;
+                        sub.CancellationFeedback = r.Feedback;
+                        uow.Emit("subscription.retained", sub);
+                        uow.Audit("subscription.retention_offer", "subscription", sub.Id, after: new { offer = "discount", coupon = coupon.Code, reason }, orgId: sub.OrgId);
+                        await Task.CompletedTask;
+                        return sub;
+                    });
+                }
+                if (r?.AcceptOffer == "pause")
+                {
+                    await uow.Run(async () => { uow.Emit("subscription.retained", sub); sub.CancellationFeedback = r.Feedback; await Task.CompletedTask; });
+                    return await billing.Pause(id, true);
+                }
+                var cancelled = await billing.Cancel(id, atPeriodEnd: true, reason);
+                if (!string.IsNullOrWhiteSpace(r?.Feedback))
+                    await uow.Run(async () => { cancelled.CancellationFeedback = r.Feedback.Length > 1000 ? r.Feedback[..1000] : r.Feedback; await Task.CompletedTask; });
+                return cancelled;
             }
         });
         portal.MapPost("/subscriptions/{id}/resume", async (string token, string id, AppDb db, IConfiguration config, IClock clock, Uow uow) =>
@@ -537,6 +592,8 @@ public static class CommerceEndpoints
             }
         });
     }
+
+    public static readonly string[] CancelReasons = ["too_expensive", "missing_features", "switching_provider", "not_using_enough", "technical_issues", "other"];
 
     private static Price BuildPrice(PriceRequest r)
     {
