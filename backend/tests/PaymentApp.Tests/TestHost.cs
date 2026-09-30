@@ -30,6 +30,7 @@ public class ApiFactory : WebApplicationFactory<Program>
 {
     public WebhookCapture Webhooks { get; } = new();
     public string DbPath { get; } = Path.Combine(Path.GetTempPath(), $"paymentapp-test-{Guid.NewGuid():N}.db");
+    public string FilesPath { get; } = Path.Combine(Path.GetTempPath(), $"paymentapp-files-{Guid.NewGuid():N}");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -41,6 +42,7 @@ public class ApiFactory : WebApplicationFactory<Program>
             ["RateLimits:Scale"] = "1000",
             ["Platform:BootstrapAdminEmail"] = "root@admin.test",
             ["Anthropic:ApiKey"] = "",
+            ["Storage:Path"] = FilesPath,
         }));
         builder.ConfigureServices(s => s.AddHttpClient("webhooks").ConfigurePrimaryHttpMessageHandler(() => Webhooks));
     }
@@ -58,6 +60,7 @@ public class ApiFactory : WebApplicationFactory<Program>
         base.Dispose(disposing);
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         foreach (var f in new[] { DbPath, DbPath + "-wal", DbPath + "-shm" }) try { File.Delete(f); } catch { }
+        try { if (Directory.Exists(FilesPath)) Directory.Delete(FilesPath, true); } catch { }
     }
 }
 

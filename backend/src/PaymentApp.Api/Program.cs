@@ -64,6 +64,11 @@ builder.Services.AddScoped<OutboxProcessor>();
 builder.Services.AddScoped<WebhookSender>();
 builder.Services.AddScoped<Notifier>();
 builder.Services.AddScoped<CopilotService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Growth.AffiliateService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Growth.BudgetService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Growth.FileService>();
+builder.Services.AddSingleton<PaymentApp.Api.Modules.Growth.IFileScanner, PaymentApp.Api.Modules.Growth.NoScanner>();
+builder.Services.AddScoped<AccountingReports>();
 builder.Services.AddHttpClient("anthropic", c => c.Timeout = TimeSpan.FromSeconds(60));
 
 var app = builder.Build();
@@ -112,6 +117,7 @@ WalletEndpoints.Map(app);
 AdminEndpoints.Map(app);
 TestHelperEndpoints.Map(app);
 CopilotEndpoints.Map(app);
+GrowthEndpoints.Map(app);
 
 app.Run();
 

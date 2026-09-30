@@ -70,7 +70,7 @@ public class EntitlementService(AppDb db, Uow uow)
 /// What happens after money moves (§58, §182): orders, invoices, subscriptions, entitlements, credits,
 /// tax records. Runs inside the payment's unit of work so the business state and the ledger commit together.
 /// </summary>
-public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, CreditService credits, BillingClock billingClock) : IFulfillment
+public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, CreditService credits, BillingClock billingClock, Growth.AffiliateService affiliates) : IFulfillment
 {
     public async Task OnPaymentSucceeded(Payment p)
     {
@@ -95,6 +95,7 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
             var s = await db.CheckoutSessions.FirstAsync(x => x.Id == p.CheckoutSessionId);
             await CompleteCheckout(s, p);
         }
+        await affiliates.OnPaymentSucceeded(p);
     }
 
     public async Task CompleteCheckout(CheckoutSession s, Payment? p)
@@ -104,6 +105,7 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
         s.Status = "complete";
         s.CompletedAt = uow.Now;
         s.PaymentId = p?.Id;
+        await affiliates.Attribute(s);
         if (s.PaymentLinkId != null)
         {
             var link = await db.PaymentLinks.FirstOrDefaultAsync(l => l.Id == s.PaymentLinkId);
@@ -251,6 +253,7 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
             uow.Emit("order.updated", order);
             if (full) await entitlements.RevokeBySource(order.Id, "order refunded");
         }
+        if (full) await affiliates.ReverseForPayment(p.Id, "payment refunded");
         if (p.InvoiceId != null)
         {
             var inv = await db.Invoices.FirstAsync(i => i.Id == p.InvoiceId);
@@ -267,6 +270,7 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
 
     public async Task OnDisputeLost(Payment p, Dispute d)
     {
+        await affiliates.ReverseForPayment(p.Id, "chargeback lost");
         if (p.OrderId != null)
         {
             var order = await db.Orders.FirstAsync(o => o.Id == p.OrderId);

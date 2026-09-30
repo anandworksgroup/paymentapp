@@ -20,7 +20,7 @@ public record MeterRequest(string EventName, string DisplayName, string? Aggrega
 public record CustomerRequest(string? Email, string? Name, string? Phone, string? Country, string? Locale, string? PostalCode, string? AddressLine, string? TaxId,
     string? CustomerType, string? ExternalId, int? PaymentTermsDays, long? CreditLimit, string? TaxStatus, Dictionary<string, string>? Metadata);
 public record CheckoutRequest(string Mode, List<LineRequest> LineItems, string? Customer, string? CustomerEmail, string? Country, string? Coupon, string? SuccessUrl,
-    string? CancelUrl, string? ClientReferenceId, Dictionary<string, string>? Metadata);
+    string? CancelUrl, string? ClientReferenceId, Dictionary<string, string>? Metadata, string? Affiliate = null);
 public record PaymentLinkRequest(string PriceId, long? Quantity, bool? AllowCoupons, string? Coupon, DateTime? ExpiresAt, string? SuccessUrl, string? CancelUrl, Dictionary<string, string>? Metadata);
 public record QuoteRequest(string? Country, string? CustomerType, string? TaxId, string? Coupon);
 public record AuthenticateRequest(string Result);
@@ -336,7 +336,7 @@ public static class CommerceEndpoints
         {
             ctx.RequireOrg("checkout.write");
             return Results.Json(await checkout.Create(r.Mode, r.LineItems ?? [], r.Customer, r.CustomerEmail, r.Country, r.Coupon, r.SuccessUrl, r.CancelUrl, null,
-                r.Metadata == null ? null : Json.Serialize(r.Metadata), r.ClientReferenceId), statusCode: 201);
+                r.Metadata == null ? null : Json.Serialize(r.Metadata), r.ClientReferenceId, r.Affiliate), statusCode: 201);
         });
         co.MapGet("/checkout/sessions", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("payments.read"); return await Paging.List(db.CheckoutSessions, req); });
         co.MapGet("/checkout/sessions/{id}", async (string id, RequestContext ctx, AppDb db) =>
@@ -410,7 +410,7 @@ public static class CommerceEndpoints
                 return checkout.Result(s, p);
             }
         });
-        pub.MapPost("/links/{id}", async (string id, AppDb db, CheckoutService checkout, IClock clock) =>
+        pub.MapPost("/links/{id}", async (string id, HttpRequest req, AppDb db, CheckoutService checkout, IClock clock) =>
         {
             var link = await db.PaymentLinks.IgnoreQueryFilters().FirstOrDefaultAsync(l => l.Id == id) ?? throw ApiException.NotFound("payment link");
             using var _ = db.Tenant.Use(link.OrgId, link.Livemode);
@@ -419,9 +419,16 @@ public static class CommerceEndpoints
             var price = await db.Prices.FirstAsync(p => p.Id == link.PriceId);
             var coupon = link.CouponId == null ? null : (await db.Coupons.FirstAsync(c => c.Id == link.CouponId)).Code;
             link.Visits++;
+            // Affiliate click tracking: /pay/{link}?ref=CODE (§51).
+            var referral = req.Query["ref"].FirstOrDefault()?.Trim().ToUpperInvariant();
+            if (!string.IsNullOrEmpty(referral))
+            {
+                var affiliate = await db.Affiliates.FirstOrDefaultAsync(a => a.Code == referral && a.Status == "active");
+                if (affiliate != null) affiliate.Clicks++; else referral = null;
+            }
             await db.SaveChangesAsync();
             var s = await checkout.Create(price.Type == "recurring" ? "subscription" : "payment", [new LineRequest(price.Id, link.Quantity)], null, null, null, coupon,
-                link.SuccessUrl, link.CancelUrl, link.Id, link.MetadataJson, null);
+                link.SuccessUrl, link.CancelUrl, link.Id, link.MetadataJson, null, referral);
             return new { checkout_session = s.Id, url = s.Url };
         });
         pub.MapGet("/links/{id}", async (string id, AppDb db) =>

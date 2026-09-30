@@ -12,7 +12,7 @@ using PaymentApp.Api.Modules.Wallet;
 namespace PaymentApp.Api.Endpoints;
 
 public record RefundRequest(string Payment, long? Amount, string? Reason);
-public record EvidenceItem(string Type, string Text);
+public record EvidenceItem(string Type, string Text, string? FileId = null);
 public record EvidenceRequest(List<EvidenceItem> Evidence, bool Submit);
 public record ReviewRequest(bool Approve, string? Note);
 public record SubscriptionRequest(string Customer, List<SubItem> Items, string? PaymentMethod, string? Coupon, int? TrialDays, string? CollectionMethod, int? DaysUntilDue,
@@ -133,10 +133,13 @@ public static class MoneyEndpoints
                 },
             };
         });
-        pay.MapPost("/disputes/{id}/evidence", async (string id, EvidenceRequest r, RequestContext ctx, PaymentService payments) =>
+        pay.MapPost("/disputes/{id}/evidence", async (string id, EvidenceRequest r, RequestContext ctx, PaymentService payments, AppDb db) =>
         {
             ctx.RequireOrg("disputes.write");
-            return await payments.SubmitEvidence(id, r.Evidence.Select(e => (e.Type, e.Text)), r.Submit);
+            foreach (var e in r.Evidence.Where(e => e.FileId != null))
+                if (!await db.Files.AnyAsync(f => f.Id == e.FileId && f.OrgId == ctx.OrgId && f.Livemode == ctx.Livemode && f.Purpose == "dispute_evidence"))
+                    throw ApiException.Invalid($"File {e.FileId} is not a dispute_evidence upload of this account.");
+            return await payments.SubmitEvidence(id, r.Evidence.Select(e => (e.Type, e.Text, e.FileId)), r.Submit);
         });
         pay.MapGet("/orders", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("payments.read"); return await Paging.List(db.Orders, req); });
         pay.MapGet("/orders/{id}", async (string id, RequestContext ctx, AppDb db) =>
@@ -243,18 +246,23 @@ public static class MoneyEndpoints
         });
 
         // Usage ingestion (§28, §29): idempotent per key, late events billed on the next invoice.
-        bill.MapPost("/usage_events", async (UsageRequest r, RequestContext ctx, AppDb db, Uow uow) =>
+        bill.MapPost("/usage_events", async (UsageRequest r, RequestContext ctx, AppDb db, Uow uow, Modules.Growth.BudgetService budgets) =>
         {
             ctx.RequireOrg("usage.write");
-            var result = await IngestUsage(db, uow, [r]);
+            var result = await IngestUsage(db, uow, [r], budgets);
+            if (result[0].Rejected is { } why) throw new ApiException(402, "usage_limit_exceeded", why);
             return Results.Json(result[0], statusCode: 201);
         });
-        bill.MapPost("/usage_events/batch", async (UsageBatch b, RequestContext ctx, AppDb db, Uow uow) =>
+        bill.MapPost("/usage_events/batch", async (UsageBatch b, RequestContext ctx, AppDb db, Uow uow, Modules.Growth.BudgetService budgets) =>
         {
             ctx.RequireOrg("usage.write");
             if (b.Events.Count is 0 or > 1000) throw ApiException.Invalid("A batch holds 1-1000 events.");
-            var results = await IngestUsage(db, uow, b.Events);
-            return new { @object = "list", accepted = results.Count(x => !x.Duplicate), duplicates = results.Count(x => x.Duplicate), data = results };
+            var results = await IngestUsage(db, uow, b.Events, budgets);
+            return new
+            {
+                @object = "list", accepted = results.Count(x => !x.Duplicate && x.Rejected == null), duplicates = results.Count(x => x.Duplicate),
+                rejected = results.Count(x => x.Rejected != null), data = results,
+            };
         });
         bill.MapGet("/usage/summary", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {
@@ -430,9 +438,9 @@ public static class MoneyEndpoints
         });
     }
 
-    public record UsageResult(string Id, string IdempotencyKey, bool Duplicate, bool Late);
+    public record UsageResult(string Id, string IdempotencyKey, bool Duplicate, bool Late, string? Rejected = null);
 
-    private static async Task<List<UsageResult>> IngestUsage(AppDb db, Uow uow, List<UsageRequest> events)
+    private static async Task<List<UsageResult>> IngestUsage(AppDb db, Uow uow, List<UsageRequest> events, Modules.Growth.BudgetService budgets)
     {
         return await uow.Run(async () =>
         {
@@ -445,6 +453,7 @@ public static class MoneyEndpoints
             var meters = await db.Meters.Select(m => m.EventName).ToListAsync();
             var subs = await db.Subscriptions.Where(s => customers.Contains(s.CustomerId) && s.Status != "CANCELLED").ToListAsync();
             var seen = new HashSet<string>();
+            var pendingBudget = new Dictionary<string, long>();
             foreach (var e in events)
             {
                 if (existing.TryGetValue(e.IdempotencyKey, out var dup) || !seen.Add(e.IdempotencyKey)) { results.Add(new(dup?.Id ?? "", e.IdempotencyKey, true, false)); continue; }
@@ -453,6 +462,11 @@ public static class MoneyEndpoints
                 if (e.Quantity < 0 && e.CorrectsEventId == null) throw ApiException.Invalid("Negative quantities are only allowed as corrections (corrects_event_id).");
                 var ts = e.Timestamp?.ToUniversalTime() ?? uow.Now;
                 if (ts > uow.Now.AddMinutes(5)) throw ApiException.Invalid("Usage timestamps cannot be in the future.");
+                if (e.Quantity > 0 && await budgets.Check(e.Customer, e.EventName, e.Quantity, ts, pendingBudget) is { } rejected)
+                {
+                    results.Add(new("", e.IdempotencyKey, false, false, rejected));
+                    continue;
+                }
                 var sub = subs.FirstOrDefault(s => s.CustomerId == e.Customer);
                 var late = sub != null && ts < sub.CurrentPeriodStart;
                 var u = new UsageEvent
@@ -463,7 +477,7 @@ public static class MoneyEndpoints
                 db.UsageEvents.Add(u);
                 results.Add(new(u.Id, e.IdempotencyKey, false, late));
             }
-            if (results.Any(r => !r.Duplicate))
+            if (results.Any(r => !r.Duplicate && r.Rejected == null))
                 uow.Emit("usage.recorded", new Meter { Id = "batch", OrgId = uow.Ctx.OrgId!, Livemode = uow.Ctx.Livemode, EventName = string.Join(",", events.Select(e => e.EventName).Distinct()) });
             return results;
         });

@@ -505,14 +505,14 @@ public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRout
         });
     }
 
-    public async Task<Dispute> SubmitEvidence(string disputeId, IEnumerable<(string Type, string Text)> evidence, bool submit)
+    public async Task<Dispute> SubmitEvidence(string disputeId, IEnumerable<(string Type, string Text, string? FileId)> evidence, bool submit)
     {
         return await uow.Run(async () =>
         {
             var d = await db.Disputes.FirstOrDefaultAsync(x => x.Id == disputeId) ?? throw ApiException.NotFound("dispute");
             if (d.Status != "needs_response") throw ApiException.Conflict("dispute_not_open", "Evidence can only be added while the dispute needs a response.");
-            foreach (var (type, text) in evidence)
-                db.DisputeEvidence.Add(new DisputeEvidence { Id = Ids.New("dsev"), CreatedAt = uow.Now, DisputeId = d.Id, Type = type, Text = text, AddedBy = uow.Ctx.ActorId });
+            foreach (var (type, text, fileId) in evidence)
+                db.DisputeEvidence.Add(new DisputeEvidence { Id = Ids.New("dsev"), CreatedAt = uow.Now, DisputeId = d.Id, Type = type, Text = text, FileId = fileId, AddedBy = uow.Ctx.ActorId });
             if (submit)
             {
                 uow.Transition("dispute", d.Id, d.Status, "under_review", d.OrgId);

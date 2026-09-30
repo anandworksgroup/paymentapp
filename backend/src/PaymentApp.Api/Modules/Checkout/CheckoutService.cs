@@ -176,7 +176,7 @@ public record ConfirmRequest(string? Email, string? Name, string? Country, strin
 public class CheckoutService(AppDb db, Uow uow, CheckoutCalculator calc, PaymentService payments, BillingService billing, IConfiguration config)
 {
     public async Task<CheckoutSession> Create(string mode, IReadOnlyList<LineRequest> lines, string? customerId, string? email, string? country,
-        string? couponCode, string? successUrl, string? cancelUrl, string? paymentLinkId, string? metadataJson, string? clientReferenceId)
+        string? couponCode, string? successUrl, string? cancelUrl, string? paymentLinkId, string? metadataJson, string? clientReferenceId, string? affiliateCode = null)
     {
         if (mode is not ("payment" or "subscription")) throw ApiException.Invalid("mode must be payment or subscription.");
         ValidateUrl(successUrl, "success_url");
@@ -192,6 +192,7 @@ public class CheckoutService(AppDb db, Uow uow, CheckoutCalculator calc, Payment
                 Id = Ids.New("cs", 24), CreatedAt = uow.Now, Mode = mode, Status = "open", CustomerId = customerId,
                 CustomerEmail = email ?? customer?.Email, Country = country, SuccessUrl = successUrl, CancelUrl = cancelUrl,
                 PaymentLinkId = paymentLinkId, ExpiresAt = uow.Now.AddHours(24), MetadataJson = metadataJson, ClientReferenceId = clientReferenceId,
+                AffiliateCode = affiliateCode?.Trim().ToUpperInvariant(),
             };
             Apply(s, quote);
             db.CheckoutSessions.Add(s);

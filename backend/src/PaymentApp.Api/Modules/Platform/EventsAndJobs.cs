@@ -300,6 +300,7 @@ public class JobRunner(IServiceScopeFactory scopes, IClock clock, ILogger<JobRun
         await Step("scheduled_payouts", sp => sp.GetRequiredService<TreasuryService>().RunScheduledPayouts(now));
         await Step("payouts", sp => sp.GetRequiredService<TreasuryService>().ProcessPayouts(now));
         await Step("withdrawals", sp => sp.GetRequiredService<WalletService>().SettleWithdrawals());
+        await Step("affiliate_commissions", sp => sp.GetRequiredService<Growth.AffiliateService>().ApproveDue(now));
         await Step("invoice_reminders", sp => sp.GetRequiredService<Notifier>().InvoiceReminders(now));
         await Step("outbox", sp => sp.GetRequiredService<OutboxProcessor>().ProcessBatch());
         await Step("webhooks", sp => sp.GetRequiredService<WebhookSender>().SendDue());

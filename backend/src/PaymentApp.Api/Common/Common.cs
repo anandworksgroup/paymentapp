@@ -155,6 +155,33 @@ public class FieldEncryptor
         return $"{_activeVersion}:{Convert.ToBase64String(nonce)}:{Convert.ToBase64String(cipher)}:{Convert.ToBase64String(tag)}";
     }
 
+    /// <summary>Binary variant for files at rest: [version-len][version][nonce 12][tag 16][cipher].</summary>
+    public byte[] EncryptBytes(byte[] plain)
+    {
+        var key = _keys[_activeVersion];
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var cipher = new byte[plain.Length];
+        var tag = new byte[16];
+        using (var aes = new AesGcm(key, 16)) aes.Encrypt(nonce, plain, cipher, tag);
+        var version = Encoding.UTF8.GetBytes(_activeVersion);
+        return [(byte)version.Length, .. version, .. nonce, .. tag, .. cipher];
+    }
+
+    public byte[] DecryptBytes(byte[] stored)
+    {
+        var vlen = stored[0];
+        var version = Encoding.UTF8.GetString(stored, 1, vlen);
+        if (!_keys.TryGetValue(version, out var key)) throw new InvalidOperationException("Unknown encryption key version.");
+        var offset = 1 + vlen;
+        var nonce = stored.AsSpan(offset, 12);
+        var tag = stored.AsSpan(offset + 12, 16);
+        var cipher = stored.AsSpan(offset + 28);
+        var plain = new byte[cipher.Length];
+        using var aes = new AesGcm(key, 16);
+        aes.Decrypt(nonce, cipher, tag, plain);
+        return plain;
+    }
+
     public string Decrypt(string stored)
     {
         var parts = stored.Split(':');
