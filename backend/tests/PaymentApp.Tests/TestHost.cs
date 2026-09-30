@@ -26,9 +26,17 @@ public class WebhookCapture : HttpMessageHandler
     }
 }
 
+/// <summary>In-memory DNS so domain verification tests never touch the network.</summary>
+public class FakeDns : PaymentApp.Api.Modules.Operations.IDnsTxtResolver
+{
+    public Dictionary<string, List<string>> Txt { get; } = [];
+    public Task<IReadOnlyList<string>> TxtRecords(string name) => Task.FromResult<IReadOnlyList<string>>(Txt.TryGetValue(name, out var v) ? v : []);
+}
+
 public class ApiFactory : WebApplicationFactory<Program>
 {
     public WebhookCapture Webhooks { get; } = new();
+    public FakeDns Dns { get; } = new();
     public string DbPath { get; } = Path.Combine(Path.GetTempPath(), $"paymentapp-test-{Guid.NewGuid():N}.db");
     public string FilesPath { get; } = Path.Combine(Path.GetTempPath(), $"paymentapp-files-{Guid.NewGuid():N}");
 
@@ -44,7 +52,11 @@ public class ApiFactory : WebApplicationFactory<Program>
             ["Anthropic:ApiKey"] = "",
             ["Storage:Path"] = FilesPath,
         }));
-        builder.ConfigureServices(s => s.AddHttpClient("webhooks").ConfigurePrimaryHttpMessageHandler(() => Webhooks));
+        builder.ConfigureServices(s =>
+        {
+            s.AddHttpClient("webhooks").ConfigurePrimaryHttpMessageHandler(() => Webhooks);
+            s.AddSingleton<PaymentApp.Api.Modules.Operations.IDnsTxtResolver>(Dns);
+        });
     }
 
     public T WithDb<T>(Func<AppDb, T> f)
@@ -97,6 +109,7 @@ public class Api(HttpClient http)
     public async Task<JsonNode> Get(string path, int expect = 200) => await Expect(HttpMethod.Get, path, null, expect);
     public async Task<JsonNode> Post(string path, object? body = null, int expect = 200, string? idem = null) => await Expect(HttpMethod.Post, path, body ?? new { }, expect, idem);
     public async Task<JsonNode> Patch(string path, object body, int expect = 200) => await Expect(HttpMethod.Patch, path, body, expect);
+    public async Task<JsonNode> Put(string path, object body, int expect = 200) => await Expect(HttpMethod.Put, path, body, expect);
 
     private async Task<JsonNode> Expect(HttpMethod m, string path, object? body, int expect, string? idem = null)
     {

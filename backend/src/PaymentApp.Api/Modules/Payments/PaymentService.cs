@@ -29,7 +29,7 @@ public interface IFulfillment
 /// transaction, state transition and outbox event.
 /// </summary>
 public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRouter router, IPaymentProvider sim,
-    IFulfillment fulfillment, IConfiguration config)
+    IFulfillment fulfillment, IConfiguration config, Marketplace.MarketplaceService marketplace)
 {
     private const int MaxProvidersPerPayment = 2;
 
@@ -261,14 +261,17 @@ public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRout
         var ltx = await ledger.Post("payment", $"payment:{p.Id}", $"Payment {p.Id}", "payment", p.Id, p.OrgId, p.Livemode, legs);
 
         var held = p.RiskAction == "REVIEW" || org.Restriction == "PAYOUT_HOLD";
-        db.BalanceTransactions.Add(new BalanceTransaction
+        var merchantTxn = new BalanceTransaction
         {
             Id = Ids.New("txn"), CreatedAt = uow.Now, OrgId = p.OrgId, Livemode = p.Livemode, Type = "payment",
             Amount = p.Amount - p.TaxAmount, Fee = p.FeeAmount, Net = p.NetAmount, Currency = p.Currency,
             SourceType = "payment", SourceId = p.Id, Status = "pending", AvailableOn = uow.Now.AddDays(org.SettlementDelayDays),
             LedgerTransactionId = ltx.Id, HeldForReview = held,
             Description = $"Payment {p.Id} (tax {Money.Format(p.TaxAmount, p.Currency)} remitted by platform)",
-        });
+        };
+        db.BalanceTransactions.Add(merchantTxn);
+        if (p.CheckoutSessionId != null && await db.CheckoutSessions.FirstOrDefaultAsync(s => s.Id == p.CheckoutSessionId) is { SellerId: not null } session)
+            await marketplace.Split(p, session, merchantTxn, org.SettlementDelayDays);
         uow.Emit("payment.succeeded", p);
         await fulfillment.OnPaymentSucceeded(p);
     }
@@ -360,6 +363,7 @@ public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRout
             if (r.TaxAmount > 0) legs.Add(Leg.Debit(await ledger.Platform(Accounts.TaxPayable(taxCountry), p.Currency, p.Livemode), r.TaxAmount));
             var paymentLtx = await db.LedgerTransactions.FirstAsync(t => t.PostingKey == $"payment:{p.Id}");
             var ltx = await ledger.Post("refund", $"refund:{r.Id}", $"Refund {r.Id} of {p.Id}", "refund", r.Id, p.OrgId, p.Livemode, legs, parentId: paymentLtx.Id);
+            await marketplace.Clawback(p, r.Amount - r.TaxAmount, "refund", "refund", r.Id);
             db.BalanceTransactions.Add(new BalanceTransaction
             {
                 Id = Ids.New("txn"), CreatedAt = uow.Now, OrgId = p.OrgId, Livemode = p.Livemode, Type = "refund",
@@ -492,6 +496,7 @@ public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRout
             if (tax > 0) legs.Add(Leg.Debit(await ledger.Platform(Accounts.TaxPayable(taxCountry), p.Currency, p.Livemode), tax));
             var paymentLtx = await db.LedgerTransactions.FirstAsync(t => t.PostingKey == $"payment:{p.Id}");
             var ltx = await ledger.Post("dispute", $"dispute:{d.Id}", $"Dispute {d.Id} on {p.Id}", "dispute", d.Id, p.OrgId, p.Livemode, legs, paymentLtx.Id);
+            await marketplace.Clawback(p, amount - tax, "dispute", "dispute", d.Id);
             db.BalanceTransactions.Add(new BalanceTransaction
             {
                 Id = Ids.New("txn"), CreatedAt = uow.Now, OrgId = p.OrgId, Livemode = p.Livemode, Type = "dispute", Amount = -(amount - tax),
@@ -551,6 +556,7 @@ public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRout
                 };
                 if (tax > 0) legs.Add(Leg.Credit(await ledger.Platform(Accounts.TaxPayable(taxCountry), p.Currency, p.Livemode), tax));
                 var ltx = await ledger.Post("dispute_reversal", $"dispute_won:{d.Id}", $"Dispute {d.Id} won", "dispute", d.Id, p.OrgId, p.Livemode, legs);
+                await marketplace.Clawback(p, d.Amount - tax, "dispute_reversal", "dispute", d.Id, reverse: true);
                 db.BalanceTransactions.Add(new BalanceTransaction
                 {
                     Id = Ids.New("txn"), CreatedAt = uow.Now, OrgId = p.OrgId, Livemode = p.Livemode, Type = "dispute_reversal",

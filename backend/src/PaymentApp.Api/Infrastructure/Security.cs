@@ -41,6 +41,7 @@ public static class Permissions
         "admin.payouts.hold", "admin.aml.read", "admin.aml.write", "admin.cases.decide", "admin.sanctions.decide",
         "admin.restrict", "admin.freeze", "admin.approve", "admin.providers.manage", "admin.config.manage",
         "admin.audit.read", "admin.export", "admin.reports.read", "admin.regulatory.report", "admin.kyc.decide",
+        "admin.support", "admin.incidents",
     ];
 
     private static readonly string[] AdminReads = Admin.Where(p => p.EndsWith(".read") || p == "admin.overview").ToArray();
@@ -57,7 +58,7 @@ public static class Permissions
         // Finance has no sanctions or AML case authority (§86).
         ["FINANCE_ADMIN"] = ["admin.overview", "admin.merchants.read", "admin.transactions.read", "admin.ledger.read", "admin.ledger.adjust",
             "admin.recon.read", "admin.recon.resolve", "admin.payouts.hold", "admin.reports.read", "admin.approve"],
-        ["SUPPORT_ADMIN"] = ["admin.overview", "admin.users.read", "admin.merchants.read", "admin.transactions.read"],
+        ["SUPPORT_ADMIN"] = ["admin.overview", "admin.users.read", "admin.merchants.read", "admin.transactions.read", "admin.support", "admin.incidents"],
         ["AUDITOR"] = AdminReads.Concat(["admin.export"]).ToArray(),
         ["LEGAL_REVIEWER"] = ["admin.overview", "admin.users.read", "admin.aml.read", "admin.audit.read", "admin.approve", "admin.pii.unmask"],
         ["REGULATORY_REPORTING"] = ["admin.overview", "admin.aml.read", "admin.users.read", "admin.regulatory.report", "admin.export"],
@@ -94,6 +95,14 @@ public class RequestContext
         if (OrgId == null) throw ApiException.Invalid("Select an organization (X-Org-Id header) or use an API key.");
         if (!Permissions.Contains(permission)) throw ApiException.Forbidden($"Missing permission '{permission}'.");
         return OrgId;
+    }
+
+    /// <summary>Any signed-in member of the selected organization, whatever their role (support, notices).</summary>
+    public (string OrgId, User User) RequireMember()
+    {
+        var user = RequireUser();
+        if (OrgId == null || MemberRole == null) throw ApiException.Invalid("Select an organization you belong to (X-Org-Id header).");
+        return (OrgId, user);
     }
 
     public User RequireAdmin(string permission)

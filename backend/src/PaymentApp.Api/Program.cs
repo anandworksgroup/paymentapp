@@ -69,6 +69,12 @@ builder.Services.AddScoped<PaymentApp.Api.Modules.Growth.BudgetService>();
 builder.Services.AddScoped<PaymentApp.Api.Modules.Growth.FileService>();
 builder.Services.AddSingleton<PaymentApp.Api.Modules.Growth.IFileScanner, PaymentApp.Api.Modules.Growth.NoScanner>();
 builder.Services.AddScoped<AccountingReports>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Marketplace.MarketplaceService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Operations.PeriodCloseService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Operations.ImportService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Operations.FlagService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Operations.DomainService>();
+builder.Services.AddSingleton<PaymentApp.Api.Modules.Operations.IDnsTxtResolver, PaymentApp.Api.Modules.Operations.DnsTxtResolver>();
 builder.Services.AddHttpClient("anthropic", c => c.Timeout = TimeSpan.FromSeconds(60));
 
 var app = builder.Build();
@@ -118,6 +124,7 @@ AdminEndpoints.Map(app);
 TestHelperEndpoints.Map(app);
 CopilotEndpoints.Map(app);
 GrowthEndpoints.Map(app);
+OperationsEndpoints.Map(app);
 
 app.Run();
 

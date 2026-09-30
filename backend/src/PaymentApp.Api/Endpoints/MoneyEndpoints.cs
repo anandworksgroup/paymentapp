@@ -23,7 +23,7 @@ public record CancelRequest(bool AtPeriodEnd = true, string? Reason = null);
 public record InvoiceRequest(string Customer, string Currency, List<InvoiceLineRequest> Lines, int? DaysUntilDue, string? PurchaseOrder, string? Memo, bool AutoFinalize = true);
 public record UsageRequest(string Customer, string EventName, long Quantity, DateTime? Timestamp, string IdempotencyKey, string? CorrectsEventId);
 public record UsageBatch(List<UsageRequest> Events);
-public record CreditRequest(string Customer, string Operation, long Amount, string? CreditType, string? IdempotencyKey, string? Description);
+public record CreditRequest(string Customer, string Operation, long Amount, string? CreditType, string? IdempotencyKey, string? Description, DateTime? ExpiresAt = null);
 public record ClockRequest(DateTime FrozenTime, string? Name);
 public record PayoutRequest(string Currency, long? Amount);
 public record WalletMoveRequest(string Currency, long Amount);
@@ -326,7 +326,9 @@ public static class MoneyEndpoints
         {
             ctx.RequireOrg("credits.write");
             _ = await db.Customers.FirstOrDefaultAsync(c => c.Id == r.Customer) ?? throw ApiException.NotFound("customer");
-            return await credits.Apply(r.Customer, r.CreditType ?? "credits", r.Operation, r.Amount, r.IdempotencyKey, "api", null, r.Description);
+            if (r.Operation is "transfer_in" or "transfer_out") throw ApiException.Invalid("Credit transfers happen through customer merges.");
+            if (r.ExpiresAt != null && r.Operation != "issue") throw ApiException.Invalid("expires_at applies to issue operations.");
+            return await credits.Apply(r.Customer, r.CreditType ?? "credits", r.Operation, r.Amount, r.IdempotencyKey, "api", null, r.Description, r.ExpiresAt?.ToUniversalTime());
         }).RequireRateLimiting("financial");
         bill.MapGet("/entitlements", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {

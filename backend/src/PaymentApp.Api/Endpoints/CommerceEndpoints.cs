@@ -21,8 +21,8 @@ public record MeterRequest(string EventName, string DisplayName, string? Aggrega
 public record CustomerRequest(string? Email, string? Name, string? Phone, string? Country, string? Locale, string? PostalCode, string? AddressLine, string? TaxId,
     string? CustomerType, string? ExternalId, int? PaymentTermsDays, long? CreditLimit, string? TaxStatus, Dictionary<string, string>? Metadata);
 public record CheckoutRequest(string Mode, List<LineRequest> LineItems, string? Customer, string? CustomerEmail, string? Country, string? Coupon, string? SuccessUrl,
-    string? CancelUrl, string? ClientReferenceId, Dictionary<string, string>? Metadata, string? Affiliate = null);
-public record PaymentLinkRequest(string PriceId, long? Quantity, bool? AllowCoupons, string? Coupon, DateTime? ExpiresAt, string? SuccessUrl, string? CancelUrl, Dictionary<string, string>? Metadata);
+    string? CancelUrl, string? ClientReferenceId, Dictionary<string, string>? Metadata, string? Affiliate = null, string? Seller = null, int? ApplicationFeeBps = null);
+public record PaymentLinkRequest(string PriceId, long? Quantity, bool? AllowCoupons, string? Coupon, DateTime? ExpiresAt, string? SuccessUrl, string? CancelUrl, Dictionary<string, string>? Metadata, string? Seller = null, int? ApplicationFeeBps = null);
 public record QuoteRequest(string? Country, string? CustomerType, string? TaxId, string? Coupon);
 public record AuthenticateRequest(string Result);
 public record TokenRequest(string Type, string? Number, int? ExpMonth, int? ExpYear, string? Cvc, string? Vpa);
@@ -283,6 +283,7 @@ public static class CommerceEndpoints
         {
             ctx.RequireOrg("customers.read");
             var q = db.Customers.AsQueryable();
+            if (req.Query["include_merged"] != "true") q = q.Where(c => c.MergedIntoId == null);
             if (req.Query["email"].FirstOrDefault() is { Length: > 0 } e) q = q.Where(c => c.Email == e.ToLowerInvariant());
             if (req.Query["search"].FirstOrDefault() is { Length: > 1 } s)
             {
@@ -388,7 +389,7 @@ public static class CommerceEndpoints
         {
             ctx.RequireOrg("checkout.write");
             return Results.Json(await checkout.Create(r.Mode, r.LineItems ?? [], r.Customer, r.CustomerEmail, r.Country, r.Coupon, r.SuccessUrl, r.CancelUrl, null,
-                r.Metadata == null ? null : Json.Serialize(r.Metadata), r.ClientReferenceId, r.Affiliate), statusCode: 201);
+                r.Metadata == null ? null : Json.Serialize(r.Metadata), r.ClientReferenceId, r.Affiliate, r.Seller, r.ApplicationFeeBps), statusCode: 201);
         });
         co.MapGet("/checkout/sessions", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {
@@ -424,6 +425,8 @@ public static class CommerceEndpoints
                 {
                     Id = Ids.New("plink", 16), CreatedAt = uow.Now, PriceId = price.Id, Quantity = r.Quantity ?? 1, AllowCoupons = r.AllowCoupons ?? true, CouponId = couponId,
                     ExpiresAt = r.ExpiresAt, SuccessUrl = r.SuccessUrl, CancelUrl = r.CancelUrl, MetadataJson = r.Metadata == null ? null : Json.Serialize(r.Metadata),
+                    SellerId = r.Seller == null ? null : (await db.Sellers.FirstOrDefaultAsync(s => s.Id == r.Seller && s.Status == "active") ?? throw ApiException.Invalid("Unknown or inactive seller.")).Id,
+                    ApplicationFeeBps = r.ApplicationFeeBps,
                 };
                 db.PaymentLinks.Add(l);
                 uow.Emit("payment_link.created", l);
@@ -507,7 +510,7 @@ public static class CommerceEndpoints
             }
             await db.SaveChangesAsync();
             var s = await checkout.Create(price.Type == "recurring" ? "subscription" : "payment", [new LineRequest(price.Id, link.Quantity)], null, null, null, coupon,
-                link.SuccessUrl, link.CancelUrl, link.Id, link.MetadataJson, null, referral);
+                link.SuccessUrl, link.CancelUrl, link.Id, link.MetadataJson, null, referral, link.SellerId, link.ApplicationFeeBps);
             if (variantTag != null) { s.ExperimentVariant = variantTag; await db.SaveChangesAsync(); }
             return new { checkout_session = s.Id, url = s.Url };
         });

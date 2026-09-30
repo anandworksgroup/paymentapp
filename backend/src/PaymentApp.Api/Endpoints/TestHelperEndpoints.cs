@@ -29,13 +29,14 @@ public static class TestHelperEndpoints
         }
 
         t.MapPost("/run_jobs", async (RequestContext ctx, JobRunner jobs) => { RequireTestMode(ctx); return await jobs.RunAll(); });
-        t.MapPost("/balance/settle_now", async (RequestContext ctx, AppDb db, TreasuryService treasury, IClock clock) =>
+        t.MapPost("/balance/settle_now", async (RequestContext ctx, AppDb db, TreasuryService treasury, Modules.Marketplace.MarketplaceService market, IClock clock) =>
         {
             RequireTestMode(ctx);
-            // Skip the settlement delay for this org's pending test funds, then run settlement.
+            // Skip the settlement delay for this org's pending test funds (merchant and sellers), then run settlement.
             foreach (var bt in await db.BalanceTransactions.Where(b => b.Status == "pending" && !b.HeldForReview).ToListAsync()) bt.AvailableOn = clock.UtcNow;
+            foreach (var st in await db.SellerBalanceTransactions.Where(b => b.Status == "pending").ToListAsync()) st.AvailableOn = clock.UtcNow;
             await db.SaveChangesAsync();
-            return new { settled = await treasury.Settle(clock.UtcNow) };
+            return new { settled = await treasury.Settle(clock.UtcNow), sellers_settled = await market.SettleSellers(clock.UtcNow) };
         });
         t.MapPost("/payments/{id}/complete_async", async (string id, OutcomeRequest r, RequestContext ctx, AppDb db, PaymentService payments, IConfiguration config) =>
         {

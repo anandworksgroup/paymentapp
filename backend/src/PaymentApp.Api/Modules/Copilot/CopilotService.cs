@@ -373,7 +373,11 @@ public static class CopilotEndpoints
     {
         var g = app.MapGroup("/v1/copilot").WithTags("Copilot");
         g.MapGet("/status", (RequestContext ctx, CopilotService copilot) => { ctx.RequireOrg("copilot.use"); return new { configured = copilot.Configured, model = "claude-opus-5-5" }; });
-        g.MapPost("/ask", async (CopilotAsk r, RequestContext ctx, CopilotService copilot) => { ctx.RequireOrg("copilot.use"); return await copilot.Ask(r.Question, r.History); })
+        g.MapPost("/ask", async (CopilotAsk r, RequestContext ctx, CopilotService copilot, Operations.FlagService flags) =>
+        {
+            await flags.Require("copilot", ctx.RequireOrg("copilot.use"));
+            return await copilot.Ask(r.Question, r.History);
+        })
             .RequireRateLimiting("financial");
         g.MapPost("/actions/{id}/confirm", async (string id, CopilotConfirm r, RequestContext ctx, CopilotService copilot) => { ctx.RequireOrg("copilot.use"); return await copilot.Confirm(id, r.Approve); });
         g.MapGet("/actions", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("copilot.use"); return await Endpoints.Paging.List(db.CopilotActions, req); });

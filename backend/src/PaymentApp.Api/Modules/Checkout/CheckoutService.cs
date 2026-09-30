@@ -176,8 +176,15 @@ public record ConfirmRequest(string? Email, string? Name, string? Country, strin
 public class CheckoutService(AppDb db, Uow uow, CheckoutCalculator calc, PaymentService payments, BillingService billing, IConfiguration config)
 {
     public async Task<CheckoutSession> Create(string mode, IReadOnlyList<LineRequest> lines, string? customerId, string? email, string? country,
-        string? couponCode, string? successUrl, string? cancelUrl, string? paymentLinkId, string? metadataJson, string? clientReferenceId, string? affiliateCode = null)
+        string? couponCode, string? successUrl, string? cancelUrl, string? paymentLinkId, string? metadataJson, string? clientReferenceId, string? affiliateCode = null, string? sellerId = null, int? applicationFeeBps = null)
     {
+        if (sellerId != null)
+        {
+            var seller = await db.Sellers.FirstOrDefaultAsync(x => x.Id == sellerId) ?? throw ApiException.NotFound("seller");
+            if (seller.Status != "active") throw new ApiException(400, "seller_not_active", "This seller can't accept payments until verification is complete.");
+            if (mode != "payment") throw ApiException.Invalid("Marketplace split payments support one-time checkouts.");
+        }
+        if (applicationFeeBps is < 0 or > 5000) throw ApiException.Invalid("application_fee_bps must be 0-5000.");
         if (mode is not ("payment" or "subscription")) throw ApiException.Invalid("mode must be payment or subscription.");
         ValidateUrl(successUrl, "success_url");
         ValidateUrl(cancelUrl, "cancel_url");
@@ -193,6 +200,7 @@ public class CheckoutService(AppDb db, Uow uow, CheckoutCalculator calc, Payment
                 CustomerEmail = email ?? customer?.Email, Country = country, SuccessUrl = successUrl, CancelUrl = cancelUrl,
                 PaymentLinkId = paymentLinkId, ExpiresAt = uow.Now.AddHours(24), MetadataJson = metadataJson, ClientReferenceId = clientReferenceId,
                 AffiliateCode = affiliateCode?.Trim().ToUpperInvariant(),
+                SellerId = sellerId, ApplicationFeeBps = applicationFeeBps,
             };
             Apply(s, quote);
             db.CheckoutSessions.Add(s);

@@ -27,7 +27,7 @@ public class FileService(AppDb db, Uow uow, FieldEncryptor encryptor, IFileScann
     public const long MaxBytes = 10 * 1024 * 1024;
     public static readonly string[] Purposes = ["kyb_document", "kyc_document", "dispute_evidence", "tax_document"];
 
-    private string Root => Path.IsPathRooted(config["Storage:Path"] ?? "") ? config["Storage:Path"]! : Path.Combine(env.ContentRootPath, config["Storage:Path"] ?? "data/files");
+    private string Root => Path.IsPathRooted(config["Storage:Path"] ?? "") ? config["Storage:Path"]! : Path.Combine(env.ContentRootPath, config["Storage:Path"] ?? "storage/files");
     private string Secret => config["Security:FileUrlSecret"] ?? config["Security:PortalTokenSecret"] ?? throw new InvalidOperationException("No file URL signing secret configured.");
 
     public async Task<StoredFile> Save(IFormFile upload, string purpose, string? orgId, string? userId, bool livemode)

@@ -291,6 +291,50 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
 /// <summary>Credit ledger (§30, §242): every movement is a row; consumption is atomic inside a serialized unit of work.</summary>
 public class CreditService(AppDb db, Uow uow)
 {
+    /// <summary>
+    /// Expires grants whose expiry has passed (§30). Consumption is attributed to lots first-expiring-first,
+    /// so only the unused remainder of each expired grant is removed; each expiry is idempotent per grant.
+    /// </summary>
+    public async Task<int> ExpireDue(DateTime now)
+    {
+        List<(string OrgId, bool Livemode, string CustomerId, string CreditType)> keys;
+        using (db.Tenant.Elevate())
+            keys = (await db.CreditLedger.AsNoTracking().Where(e => e.ExpiresAt != null && e.ExpiresAt <= now && e.Delta > 0)
+                .Select(e => new { e.OrgId, e.Livemode, e.CustomerId, e.CreditType }).Distinct().ToListAsync())
+                .Select(k => (k.OrgId, k.Livemode, k.CustomerId, k.CreditType)).ToList();
+        var expired = 0;
+        foreach (var (orgId, livemode, customerId, type) in keys)
+        {
+            using var _ = db.Tenant.Use(orgId, livemode);
+            var entries = await db.CreditLedger.Where(e => e.CustomerId == customerId && e.CreditType == type).OrderBy(e => e.CreatedAt).ThenBy(e => e.Id).ToListAsync();
+            var lots = new List<(string Id, long Remaining, DateTime? Expires)>();
+            foreach (var e in entries)
+            {
+                if (e.Operation == "expire" && e.SourceType == "credit_grant")
+                {
+                    var i = lots.FindIndex(l => l.Id == e.SourceId);
+                    if (i >= 0) lots[i] = (lots[i].Id, lots[i].Remaining + e.Delta, lots[i].Expires);
+                    continue;
+                }
+                if (e.Delta > 0) { lots.Add((e.Id, e.Delta, e.Operation is "issue" or "transfer_in" or "adjust" ? e.ExpiresAt : null)); continue; }
+                var need = -e.Delta;
+                foreach (var idx in lots.Select((l, i) => (l, i)).Where(x => x.l.Remaining > 0).OrderBy(x => x.l.Expires ?? DateTime.MaxValue).ThenBy(x => x.i).Select(x => x.i).ToList())
+                {
+                    if (need == 0) break;
+                    var take = Math.Min(need, lots[idx].Remaining);
+                    lots[idx] = (lots[idx].Id, lots[idx].Remaining - take, lots[idx].Expires);
+                    need -= take;
+                }
+            }
+            foreach (var lot in lots.Where(l => l.Expires != null && l.Expires <= now && l.Remaining > 0))
+            {
+                await Apply(customerId, type, "expire", lot.Remaining, $"expire:{lot.Id}", "credit_grant", lot.Id, "Unused credits expired");
+                expired++;
+            }
+        }
+        return expired;
+    }
+
     public async Task<(long Available, long Reserved)> Balance(string customerId, string creditType)
     {
         var q = db.CreditLedger.Where(e => e.CustomerId == customerId && e.CreditType == creditType);
@@ -327,6 +371,10 @@ public class CreditService(AppDb db, Uow uow)
                 delta = 0; reservedDelta = -amount; break;
             case "expire":
                 delta = -Math.Min(amount, available); break;
+            case "transfer_out":
+                if (available < amount) throw new ApiException(402, "insufficient_credits", $"Only {available} credits available.");
+                delta = -amount; break;
+            case "transfer_in": delta = amount; break;
             case "adjust": delta = amount; break;
             default: throw ApiException.Invalid("Unknown credit operation.");
         }
