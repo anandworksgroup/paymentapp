@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PaymentApp.Api.Common;
+using PaymentApp.Api.Data;
 using PaymentApp.Api.Modules.Marketplace;
 using PaymentApp.Api.Modules.Operations;
 using PaymentApp.Api.Infrastructure;
@@ -324,6 +325,31 @@ public static class DemoSeed
             await s.ServiceProvider.GetRequiredService<ReconciliationService>().Run("seed");
         }
         clock.Offset = TimeSpan.Zero;
+
+        // ───── Risk rule, payment request, custom role, bank statement ─────
+        await As(root, owner, org.Id, async sp =>
+        {
+            var db = sp.GetRequiredService<AppDb>();
+            var uow = sp.GetRequiredService<Uow>();
+            await uow.Run(async () =>
+            {
+                db.RiskRules.Add(new RiskRule { Id = Ids.New("rrule"), CreatedAt = uow.Now, UpdatedAt = uow.Now, Name = "Review orders over $1,000", Field = "amount_usd", Operator = "gte", Value = "100000", Action = "review", Priority = 10, CreatedBy = owner.Id });
+                db.RiskRules.Add(new RiskRule { Id = Ids.New("rrule"), CreatedAt = uow.Now, UpdatedAt = uow.Now, Name = "Block disposable test domain", Field = "email_domain", Operator = "in", Value = "mailinator.com, tempmail.com", Action = "block", Priority = 5, CreatedBy = owner.Id });
+                await Task.CompletedTask;
+            });
+            await sp.GetRequiredService<PaymentRequestService>().Create(null, "procurement@bigco.example", 450_000, "USD", "Onboarding workshop (2 days)", "digital_service", 21, "As agreed on our call — thank you!", true);
+            await sp.GetRequiredService<RoleService>().Create(org.Id, "Refunds desk", "Front-line support who can issue refunds", ["payments.read", "payments.refund", "customers.read", "disputes.read"]);
+            // A bank statement for the operating account: the payout arrived, plus one unrelated deposit and a fee.
+            var payout = await db.Payouts.Where(x => x.Status == "PAID" && x.Currency == "USD").OrderByDescending(x => x.PaidAt).FirstOrDefaultAsync();
+            if (payout != null)
+            {
+                var day = (payout.PaidAt ?? DateTime.UtcNow).ToString("yyyy-MM-dd");
+                var major = $"{payout.Amount / 100}.{payout.Amount % 100:D2}";
+                var csv = $"Date,Amount,Reference,Description\n{day},{major},{payout.Id},PAYMENTAPP PAYOUT\n{day},250.00,,Transfer from savings\n{day},-12.50,,Monthly account fee\n";
+                await sp.GetRequiredService<BankReconciliationService>().Import(csv, "USD", "Operating account");
+            }
+            return true;
+        });
 
         // ───── Support and incidents ─────
         var supportStaff = users["support@demo.test"];
