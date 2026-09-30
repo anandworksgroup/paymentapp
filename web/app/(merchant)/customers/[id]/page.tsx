@@ -14,6 +14,9 @@ import type { CustomerDetail } from "@/components/merchant/billing/types";
 import { CustomerFormModal } from "@/components/merchant/customers/CustomerFormModal";
 import { AnonymizeButton, PortalSessionButton } from "@/components/merchant/customers/CustomerActions";
 import { CreditsCard, EntitlementsCard, PaymentMethodsCard, ProfileCard, UsageCard } from "@/components/merchant/customers/CustomerSections";
+import { MergeButton, MergedBanner } from "@/components/merchant/growth/CustomerMerge";
+import { BudgetsCard } from "@/components/merchant/growth/BudgetsCard";
+import type { CustomerWithMerge } from "@/components/merchant/growth/types";
 
 export default function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -31,11 +34,14 @@ export default function CustomerDetailPage() {
 }
 
 function Detail({ d, reload }: { d: CustomerDetail; reload: () => void }) {
-  const c = d.customer;
+  const c = d.customer as CustomerWithMerge;
   const { can } = useMerchant();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const anonymized = !!c.anonymized_at;
+  // A merged customer is a read-only tombstone that points at the survivor.
+  const merged = !!c.merged_into_id;
+  const editable = !anonymized && !merged;
 
   return (
     <>
@@ -46,18 +52,22 @@ function Detail({ d, reload }: { d: CustomerDetail; reload: () => void }) {
             <span>{c.name ?? c.email ?? "Unnamed customer"}</span>
             <Chip tone={c.customer_type === "b2b" ? "lemon-soft" : "neutral"} className="text-[12px]">{c.customer_type === "b2b" ? "Business" : "Individual"}</Chip>
             {anonymized && <Chip tone="neutral" className="text-[12px]"><Icon name="lock" size={12} /> Anonymized</Chip>}
+            {merged && <Chip tone="neutral" className="text-[12px]"><Icon name="merge" size={12} /> Merged</Chip>}
           </span>
         }
         subtitle={<>{c.email ?? "No email"} · customer since {date(c.created_at)}</>}
         actions={
           <>
-            {can("customers.write") && !anonymized && <Button variant="soft" onClick={() => setEditing(true)}>Edit</Button>}
-            {can("customers.write") && !anonymized && <PortalSessionButton customer={c} />}
-            {can("invoices.write") && <LinkButton href={`/invoices/new?customer=${c.id}`} variant="ink" icon={<Icon name="invoice" size={16} />}>Create invoice</LinkButton>}
-            {can("customers.write") && !anonymized && <AnonymizeButton customer={c} onDone={reload} />}
+            {can("customers.write") && editable && <Button variant="soft" onClick={() => setEditing(true)}>Edit</Button>}
+            {can("customers.write") && editable && <PortalSessionButton customer={c} />}
+            {can("customers.write") && editable && <MergeButton customer={c} />}
+            {can("invoices.write") && !merged && <LinkButton href={`/invoices/new?customer=${c.id}`} variant="ink" icon={<Icon name="invoice" size={16} />}>Create invoice</LinkButton>}
+            {can("customers.write") && editable && <AnonymizeButton customer={c} onDone={reload} />}
           </>
         }
       />
+
+      {merged && c.merged_into_id && <MergedBanner intoId={c.merged_into_id} />}
 
       {anonymized && (
         <div role="status" className="mb-5 rounded-inner bg-surface-3 px-5 py-4 text-[13.5px] text-text-2">
@@ -150,6 +160,7 @@ function Detail({ d, reload }: { d: CustomerDetail; reload: () => void }) {
           <PaymentMethodsCard methods={d.payment_methods} defaultId={c.default_payment_method_id} />
           <EntitlementsCard items={d.entitlements} />
           <UsageCard usage={d.usage} customerId={c.id} />
+          <BudgetsCard customerId={c.id} readOnly={merged} />
         </div>
       </div>
 

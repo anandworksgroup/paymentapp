@@ -13,6 +13,7 @@ import { useMeta } from "@/components/merchant/useMeta";
 import { Icon } from "@/components/merchant/icons";
 import { Quickstart } from "@/components/merchant/developers/Quickstart";
 import { DevNav } from "@/components/merchant/developers/shared";
+import { EmbedCheckoutCard } from "@/components/merchant/growth/EmbedSnippet";
 
 export default function DevelopersPage() {
   const { can, live } = useMerchant();
@@ -52,7 +53,10 @@ export default function DevelopersPage() {
       {keys.error ? <div className="mb-5" aria-live="assertive"><ErrorNote error={keys.error} /></div> : null}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-        <Quickstart keys={keys.data?.data} keysLoading={keys.loading} />
+        <div className="min-w-0 space-y-5">
+          <Quickstart keys={keys.data?.data} keysLoading={keys.loading} />
+          <EmbedCheckoutCard />
+        </div>
         <div className="space-y-5">
           <Card>
             <CardHeader title="Test cards" subtitle="Use in test mode with any future expiry and any CVC" />

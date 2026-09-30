@@ -13,6 +13,7 @@ import { CustomerPicker } from "@/components/merchant/pickers";
 import { Icon } from "@/components/merchant/icons";
 import { SubscriptionTable } from "@/components/merchant/billing/bits";
 import { SUBSCRIPTION_STATUSES, type SubscriptionFull } from "@/components/merchant/billing/types";
+import { RetentionCard } from "@/components/merchant/growth/RetentionCard";
 
 export default function SubscriptionsPage() {
   const { can } = useMerchant();
@@ -71,6 +72,9 @@ export default function SubscriptionsPage() {
           )}
         </Loaded>
       </Card>
+      <div className="mt-5">
+        <RetentionCard />
+      </div>
     </>
   );
 }
