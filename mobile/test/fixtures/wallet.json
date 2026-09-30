@@ -1,0 +1,759 @@
+{
+ "/v1/me": {
+  "user": {
+   "object": "user",
+   "email": "alice@wallet.test",
+   "email_verified": false,
+   "name": "Alice Sharma",
+   "phone": null,
+   "country": "IN",
+   "date_of_birth": "1990-05-01",
+   "nationality": null,
+   "address": "1 Demo Street",
+   "platform_role": null,
+   "status": "NORMAL",
+   "kyc_level": 2,
+   "kyc_status": "VERIFIED",
+   "kyc_verified_at": "2026-09-18T08:42:16.462Z",
+   "risk_score": 0,
+   "risk_level": "low",
+   "mfa_enabled": false,
+   "last_login_at": "2026-09-30T13:41:09.983Z",
+   "last_activity_at": null,
+   "deleted_at": null,
+   "id": "usr_g3sYU76uhQZz8rDOoDtc",
+   "created_at": "2026-09-18T08:42:16.223Z"
+  },
+  "organizations": [],
+  "wallet": {
+   "id": "wal_AF22cW4Q2TSJZ5fOgcpB",
+   "handle": "@alice7479",
+   "status": "active"
+  },
+  "admin_permissions": []
+ },
+ "/v1/wallet": {
+  "object": "wallet_balances",
+  "wallet": "wal_AF22cW4Q2TSJZ5fOgcpB",
+  "handle": "@alice7479",
+  "status": "active",
+  "balances": [
+   {
+    "currency": "INR",
+    "available": 21495500,
+    "held": 0,
+    "pending_incoming": 0,
+    "ledger_balance": 21495500
+   },
+   {
+    "currency": "USD",
+    "available": 20000,
+    "held": 0,
+    "pending_incoming": 0,
+    "ledger_balance": 20000
+   }
+  ],
+  "estimated_total_usd": 277431,
+  "estimate_note": "Estimated at mid-market reference rates."
+ },
+ "/v1/wallet/transactions?limit=100": {
+  "object": "list",
+  "data": [
+   {
+    "id": "tr_O2pCh1N8s18mwz0r7ZwO",
+    "type": "internal",
+    "status": "COMPLETED",
+    "direction": "in",
+    "counterparty": "@erin6545",
+    "amount": 20000,
+    "currency": "USD",
+    "fee": 0,
+    "fx": null,
+    "message": "Sent.",
+    "note": "Demo transfer",
+    "purpose": "Personal support",
+    "created_at": "2026-09-28T08:42:21.302Z",
+    "completed_at": "2026-09-28T08:42:21.306Z"
+   },
+   {
+    "id": "tr_9EN0QaSK0O27iZbpvYVq",
+    "type": "withdrawal",
+    "status": "COMPLETED",
+    "direction": "out",
+    "counterparty": "Demo Bank India ****9012",
+    "amount": 2000000,
+    "currency": "INR",
+    "fee": 0,
+    "fx": null,
+    "message": "Withdrawal completed.",
+    "note": null,
+    "purpose": null,
+    "created_at": "2026-09-27T08:42:22.506Z",
+    "completed_at": "2026-09-30T08:42:22.791Z"
+   },
+   {
+    "id": "tr_WdEnPn7u2C1RzD40qoNe",
+    "type": "internal",
+    "status": "COMPLETED",
+    "direction": "out",
+    "counterparty": "@frank6145",
+    "amount": 500000,
+    "currency": "INR",
+    "fee": 1500,
+    "fx": {
+     "rate": 0.011916167,
+     "from": "INR",
+     "to": "USD",
+     "received": 5958
+    },
+    "message": "Sent.",
+    "note": "Demo transfer",
+    "purpose": "Personal support",
+    "created_at": "2026-09-25T08:42:20.842Z",
+    "completed_at": "2026-09-25T08:42:20.844Z"
+   },
+   {
+    "id": "tr_jeLVP7f3IjNgandjFBBU",
+    "type": "internal",
+    "status": "COMPLETED",
+    "direction": "out",
+    "counterparty": "@bob8239",
+    "amount": 1000000,
+    "currency": "INR",
+    "fee": 3000,
+    "fx": {
+     "rate": 0.009413772,
+     "from": "INR",
+     "to": "GBP",
+     "received": 9413
+    },
+    "message": "Sent.",
+    "note": "Demo transfer",
+    "purpose": "Personal support",
+    "created_at": "2026-09-23T08:42:20.486Z",
+    "completed_at": "2026-09-23T08:42:20.509Z"
+   },
+   {
+    "id": "tr_dsTCY7H0U3mKMUh1hVAJ",
+    "type": "funding",
+    "status": "COMPLETED",
+    "direction": "in",
+    "counterparty": "Bank transfer",
+    "amount": 25000000,
+    "currency": "INR",
+    "fee": 0,
+    "fx": null,
+    "message": "Money added to your wallet.",
+    "note": null,
+    "purpose": null,
+    "created_at": "2026-09-20T08:42:19.959Z",
+    "completed_at": "2026-09-20T08:42:20.030Z"
+   }
+  ]
+ },
+ "/v1/wallet/limits": {
+  "object": "wallet_limits",
+  "kyc_level": 2,
+  "currency": "USD",
+  "limits": [
+   {
+    "object": "wallet_limit",
+    "country": "*",
+    "kyc_level": 1,
+    "transfer_type": "*",
+    "per_transaction_usd": 100000,
+    "daily_usd": 200000,
+    "monthly_usd": 1000000,
+    "max_balance_usd": 500000,
+    "id": "wl_rrg40W8dECT4kxfHmw1A",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "wallet_limit",
+    "country": "*",
+    "kyc_level": 2,
+    "transfer_type": "*",
+    "per_transaction_usd": 2500000,
+    "daily_usd": 5000000,
+    "monthly_usd": 20000000,
+    "max_balance_usd": 10000000,
+    "id": "wl_p6rmRmVabyC1ZsrpXO4e",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "wallet_limit",
+    "country": "*",
+    "kyc_level": 3,
+    "transfer_type": "*",
+    "per_transaction_usd": 10000000,
+    "daily_usd": 25000000,
+    "monthly_usd": 100000000,
+    "max_balance_usd": 50000000,
+    "id": "wl_1NAnxV54LJKRfz0Lq3YJ",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   }
+  ]
+ },
+ "/v1/wallet/bank_accounts": {
+  "object": "list",
+  "data": [
+   {
+    "object": "bank_account",
+    "owner_type": "user",
+    "owner_id": "usr_g3sYU76uhQZz8rDOoDtc",
+    "country": "IN",
+    "currency": "INR",
+    "bank_name": "Demo Bank India",
+    "account_holder": "Alice Sharma",
+    "last4": "9012",
+    "routing": "DEMO0001234",
+    "verification_status": "verified",
+    "name_match": true,
+    "removed_at": null,
+    "id": "ba_PcyHIAvpqZTCvNBPe2Pp",
+    "created_at": "2026-09-24T08:42:22.425Z"
+   }
+  ]
+ },
+ "/v1/me/notifications": {
+  "object": "list",
+  "data": [
+   {
+    "object": "notification",
+    "org_id": null,
+    "user_id": "usr_g3sYU76uhQZz8rDOoDtc",
+    "channel": "push",
+    "recipient": "alice@wallet.test",
+    "template": "withdrawal",
+    "subject": "Withdrawal completed",
+    "body": "₹20,000.00 reached your bank.",
+    "category": "transactional",
+    "status": "delivered",
+    "object_type": "transfer",
+    "object_id": "tr_9EN0QaSK0O27iZbpvYVq",
+    "read": false,
+    "id": "ntf_ros03XoftOPUyXvIxiQv",
+    "created_at": "2026-09-30T08:42:23.990Z"
+   },
+   {
+    "object": "notification",
+    "org_id": null,
+    "user_id": "usr_g3sYU76uhQZz8rDOoDtc",
+    "channel": "push",
+    "recipient": "alice@wallet.test",
+    "template": "transfer",
+    "subject": "Transfer complete",
+    "body": "₹5,000.00 — Sent.",
+    "category": "transactional",
+    "status": "delivered",
+    "object_type": "transfer",
+    "object_id": "tr_WdEnPn7u2C1RzD40qoNe",
+    "read": false,
+    "id": "ntf_7ZyyKhWLmqkh9fyEh2G1",
+    "created_at": "2026-09-30T08:42:23.072Z"
+   },
+   {
+    "object": "notification",
+    "org_id": null,
+    "user_id": "usr_g3sYU76uhQZz8rDOoDtc",
+    "channel": "push",
+    "recipient": "alice@wallet.test",
+    "template": "transfer",
+    "subject": "Transfer complete",
+    "body": "₹10,000.00 — Sent.",
+    "category": "transactional",
+    "status": "delivered",
+    "object_type": "transfer",
+    "object_id": "tr_jeLVP7f3IjNgandjFBBU",
+    "read": false,
+    "id": "ntf_wWf8tR9ZwvsykwbBmBfe",
+    "created_at": "2026-09-30T08:42:22.993Z"
+   },
+   {
+    "object": "notification",
+    "org_id": null,
+    "user_id": "usr_g3sYU76uhQZz8rDOoDtc",
+    "channel": "push",
+    "recipient": "alice@wallet.test",
+    "template": "transfer",
+    "subject": "Transfer complete",
+    "body": "₹250,000.00 — Money added to your wallet.",
+    "category": "transactional",
+    "status": "delivered",
+    "object_type": "transfer",
+    "object_id": "tr_dsTCY7H0U3mKMUh1hVAJ",
+    "read": false,
+    "id": "ntf_OWwQ5I4d1DEaJsSVHx7g",
+    "created_at": "2026-09-30T08:42:22.839Z"
+   }
+  ]
+ },
+ "/v1/meta": {
+  "api_version": "2026-09-30",
+  "environment": "Development",
+  "currencies": [
+   {
+    "code": "USD",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "$"
+   },
+   {
+    "code": "EUR",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "€"
+   },
+   {
+    "code": "GBP",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "£"
+   },
+   {
+    "code": "INR",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "₹"
+   },
+   {
+    "code": "AUD",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "A$"
+   },
+   {
+    "code": "CAD",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "C$"
+   },
+   {
+    "code": "SGD",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "S$"
+   },
+   {
+    "code": "AED",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "AED "
+   },
+   {
+    "code": "BRL",
+    "exponent": 2,
+    "rounding": "HalfUp",
+    "symbol": "R$"
+   },
+   {
+    "code": "JPY",
+    "exponent": 0,
+    "rounding": "HalfUp",
+    "symbol": "¥"
+   },
+   {
+    "code": "BHD",
+    "exponent": 3,
+    "rounding": "HalfUp",
+    "symbol": "BD "
+   }
+  ],
+  "countries": [
+   {
+    "object": "country_capability",
+    "country": "AU",
+    "name": "Australia",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "AUD",
+    "payment_methods_csv": "card",
+    "locale": "en-AU",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_kHFa134VYjpkye6yhVrD",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "BR",
+    "name": "Brazil",
+    "checkout_enabled": true,
+    "wallet_enabled": false,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "BRL",
+    "payment_methods_csv": "card",
+    "locale": "pt-BR",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_hHB8RvKeVmG3Vh8bj1t0",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "CA",
+    "name": "Canada",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "CAD",
+    "payment_methods_csv": "card",
+    "locale": "en-CA",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_JUlmsVhh51Y5Xd7CcBwp",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "CU",
+    "name": "Cuba",
+    "checkout_enabled": false,
+    "wallet_enabled": false,
+    "payouts_enabled": false,
+    "merchant_onboarding_enabled": false,
+    "default_currency": "USD",
+    "payment_methods_csv": "card",
+    "locale": "en-US",
+    "wallet_kyc_level_required": 1,
+    "restrictions": "Comprehensive sanctions — not supported (sample policy)",
+    "id": "cc_1lXydO6RVT5eRMUhMbzX",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "FR",
+    "name": "France",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "EUR",
+    "payment_methods_csv": "card",
+    "locale": "fr-FR",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_on2qxS3ZKW4YNpaloJyz",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "DE",
+    "name": "Germany",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "EUR",
+    "payment_methods_csv": "card",
+    "locale": "de-DE",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_7FkNZ5RHwaV4RifASHze",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "IN",
+    "name": "India",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "INR",
+    "payment_methods_csv": "card,upi",
+    "locale": "en-IN",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_ogamk5rLzu756mCKWCsN",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "IR",
+    "name": "Iran",
+    "checkout_enabled": false,
+    "wallet_enabled": false,
+    "payouts_enabled": false,
+    "merchant_onboarding_enabled": false,
+    "default_currency": "USD",
+    "payment_methods_csv": "card",
+    "locale": "en-US",
+    "wallet_kyc_level_required": 1,
+    "restrictions": "Comprehensive sanctions — not supported (sample policy)",
+    "id": "cc_dPmvwhObWowMNKi2z66Z",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "IE",
+    "name": "Ireland",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "EUR",
+    "payment_methods_csv": "card",
+    "locale": "en-IE",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_BsBO4jwtVU3T7cwl1PXL",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "IT",
+    "name": "Italy",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "EUR",
+    "payment_methods_csv": "card",
+    "locale": "it-IT",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_dc8SMpDLysaDmMKH4qyU",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "JP",
+    "name": "Japan",
+    "checkout_enabled": true,
+    "wallet_enabled": false,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "JPY",
+    "payment_methods_csv": "card",
+    "locale": "ja-JP",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_KxLeYornnso5iVj3yZ0s",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "NL",
+    "name": "Netherlands",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "EUR",
+    "payment_methods_csv": "card",
+    "locale": "nl-NL",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_X7Ne7z2IRtzfUK3Knxlt",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "KP",
+    "name": "North Korea",
+    "checkout_enabled": false,
+    "wallet_enabled": false,
+    "payouts_enabled": false,
+    "merchant_onboarding_enabled": false,
+    "default_currency": "USD",
+    "payment_methods_csv": "card",
+    "locale": "en-US",
+    "wallet_kyc_level_required": 1,
+    "restrictions": "Comprehensive sanctions — not supported (sample policy)",
+    "id": "cc_uUO6B1U85PzZPCIy1orc",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "SG",
+    "name": "Singapore",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "SGD",
+    "payment_methods_csv": "card",
+    "locale": "en-SG",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_QKqCx4zAxRR9Ggy7JF4x",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "ES",
+    "name": "Spain",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "EUR",
+    "payment_methods_csv": "card",
+    "locale": "es-ES",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_hwLqSKakTSPiPwukgOl2",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "SY",
+    "name": "Syria",
+    "checkout_enabled": false,
+    "wallet_enabled": false,
+    "payouts_enabled": false,
+    "merchant_onboarding_enabled": false,
+    "default_currency": "USD",
+    "payment_methods_csv": "card",
+    "locale": "en-US",
+    "wallet_kyc_level_required": 1,
+    "restrictions": "Comprehensive sanctions — not supported (sample policy)",
+    "id": "cc_3ZodZsvylqzN2V1z6lab",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "AE",
+    "name": "United Arab Emirates",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "AED",
+    "payment_methods_csv": "card",
+    "locale": "en-AE",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_mi0ggXnziMfWbjQml6Ev",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "GB",
+    "name": "United Kingdom",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "GBP",
+    "payment_methods_csv": "card",
+    "locale": "en-GB",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_2ZZQBhJiSjUuG1hQk4Xs",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   },
+   {
+    "object": "country_capability",
+    "country": "US",
+    "name": "United States",
+    "checkout_enabled": true,
+    "wallet_enabled": true,
+    "payouts_enabled": true,
+    "merchant_onboarding_enabled": true,
+    "default_currency": "USD",
+    "payment_methods_csv": "card",
+    "locale": "en-US",
+    "wallet_kyc_level_required": 1,
+    "restrictions": null,
+    "id": "cc_GjXS4Vu4AAaxJIsE0CkA",
+    "created_at": "2026-09-30T08:40:54.091Z"
+   }
+  ],
+  "test_cards": [
+   {
+    "number": "4242424242424242",
+    "behavior": "success",
+    "brand": "visa",
+    "country": "US"
+   },
+   {
+    "number": "5555555555554444",
+    "behavior": "success",
+    "brand": "mastercard",
+    "country": "US"
+   },
+   {
+    "number": "4000003560000008",
+    "behavior": "success",
+    "brand": "visa",
+    "country": "IN"
+   },
+   {
+    "number": "4000008260000000",
+    "behavior": "success",
+    "brand": "visa",
+    "country": "GB"
+   },
+   {
+    "number": "4000000000000002",
+    "behavior": "card_declined",
+    "brand": "visa",
+    "country": "US"
+   },
+   {
+    "number": "4000000000009995",
+    "behavior": "insufficient_funds",
+    "brand": "visa",
+    "country": "US"
+   },
+   {
+    "number": "4000000000000069",
+    "behavior": "expired_card",
+    "brand": "visa",
+    "country": "US"
+   },
+   {
+    "number": "4000002500003155",
+    "behavior": "requires_action",
+    "brand": "visa",
+    "country": "US"
+   },
+   {
+    "number": "4000000000000259",
+    "behavior": "dispute",
+    "brand": "visa",
+    "country": "US"
+   },
+   {
+    "number": "4000000000000119",
+    "behavior": "processing_error",
+    "brand": "visa",
+    "country": "US"
+   },
+   {
+    "number": "4000000000000341",
+    "behavior": "fail_after_attach",
+    "brand": "visa",
+    "country": "US"
+   }
+  ],
+  "test_upi": {
+   "success@upi": "success",
+   "pending@upi": "async_success",
+   "fail@upi": "upi_declined"
+  }
+ },
+ "/v1/wallet/transfers/{id}": {
+  "id": "tr_O2pCh1N8s18mwz0r7ZwO",
+  "object": "transfer",
+  "type": "internal",
+  "status": "COMPLETED",
+  "direction": "in",
+  "source_amount": 20000,
+  "source_currency": "USD",
+  "destination_amount": 20000,
+  "destination_currency": "USD",
+  "fee_amount": 0,
+  "fx_rate": null,
+  "fx_rate_timestamp": null,
+  "message": "Sent.",
+  "created_at": "2026-09-28T08:42:21.302Z",
+  "completed_at": "2026-09-28T08:42:21.306Z"
+ }
+}

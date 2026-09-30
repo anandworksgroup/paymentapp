@@ -1,0 +1,38 @@
+name: paymentapp_mobile
+description: "Merchant-of-Record business app and Global Wallet (Flutter)."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.8.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.4.0
+  flutter_secure_storage: ^9.2.4
+  local_auth: ^2.3.0
+  share_plus: ^10.1.4
+  qr_flutter: ^4.1.0
+  intl: ^0.20.2
+  provider: ^6.1.5
+  shared_preferences: ^2.5.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Light.ttf
+          weight: 300
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
