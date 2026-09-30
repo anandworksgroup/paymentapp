@@ -245,6 +245,37 @@ public class Notifier(AppDb db, IClock clock, ILogger<Notifier> log)
         return custom == null ? (t.Subject, t.Body) : (custom.Subject, custom.Body);
     }
 
+    /// <summary>Due soon / due today / overdue / final notice reminders for invoices on payment terms (§255).</summary>
+    public async Task<int> InvoiceReminders(DateTime now)
+    {
+        using var _ = db.Tenant.Elevate();
+        var open = await db.Invoices.Where(i => (i.Status == "OPEN" || i.Status == "PAST_DUE") && i.DueDate != null && i.CustomerEmail != null && i.AmountDue > 0).ToListAsync();
+        var sent = 0;
+        foreach (var inv in open)
+        {
+            var days = (inv.DueDate!.Value.Date - now.Date).Days;
+            var (key, subject) = days switch
+            {
+                3 => ("invoice_due_soon", $"Invoice {inv.Number} is due in 3 days"),
+                0 => ("invoice_due_today", $"Invoice {inv.Number} is due today"),
+                -7 => ("invoice_overdue", $"Invoice {inv.Number} is overdue"),
+                -30 => ("invoice_final_notice", $"Final notice: invoice {inv.Number}"),
+                _ => (null, null),
+            };
+            if (key == null || inv.BillingReason != "manual" && days > 0) continue;
+            if (await db.Notifications.AnyAsync(n => n.Template == key && n.ObjectId == inv.Id)) continue;
+            db.Notifications.Add(new Notification
+            {
+                Id = Ids.New("ntf"), CreatedAt = now, OrgId = null, Channel = "email", Recipient = inv.CustomerEmail!, Template = key, Subject = subject!,
+                Body = $"Amount due: {Money.Format(inv.AmountDue - inv.AmountPaid, inv.Currency)}. Due date: {inv.DueDate:yyyy-MM-dd}.", Category = "billing",
+                Status = "sent_dev_outbox", ObjectType = "invoice", ObjectId = inv.Id,
+            });
+            sent++;
+        }
+        await db.SaveChangesAsync();
+        return sent;
+    }
+
     public static string Render(string template, IReadOnlyDictionary<string, string> vars) =>
         Regex.Replace(template, @"\{\{\s*(\w+)\s*\}\}", m => vars.TryGetValue(m.Groups[1].Value, out var v) ? WebUtility.HtmlEncode(v) : "");
 }
@@ -269,6 +300,7 @@ public class JobRunner(IServiceScopeFactory scopes, IClock clock, ILogger<JobRun
         await Step("scheduled_payouts", sp => sp.GetRequiredService<TreasuryService>().RunScheduledPayouts(now));
         await Step("payouts", sp => sp.GetRequiredService<TreasuryService>().ProcessPayouts(now));
         await Step("withdrawals", sp => sp.GetRequiredService<WalletService>().SettleWithdrawals());
+        await Step("invoice_reminders", sp => sp.GetRequiredService<Notifier>().InvoiceReminders(now));
         await Step("outbox", sp => sp.GetRequiredService<OutboxProcessor>().ProcessBatch());
         await Step("webhooks", sp => sp.GetRequiredService<WebhookSender>().SendDue());
         return results;

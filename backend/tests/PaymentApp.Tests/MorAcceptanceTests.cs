@@ -321,6 +321,12 @@ public class MorAcceptanceTests(ApiFactory f) : IClassFixture<ApiFactory>
         var bytesA = await a.Content.ReadAsByteArrayAsync();
         Assert.StartsWith("%PDF-1.4", System.Text.Encoding.ASCII.GetString(bytesA[..8]));
         Assert.Equal(bytesA, await b.Content.ReadAsByteArrayAsync());
+
+        // Net-terms reminder three days before the due date (§255), sent once.
+        var soon = await merchant.Post("/v1/invoices", new { customer = customer["id"]!.GetValue<string>(), currency = "USD", days_until_due = 3, lines = new[] { new { description = "Consulting", quantity = 1, unit_amount = 50000 } } }, 201);
+        await merchant.Post("/v1/test_helpers/run_jobs");
+        await merchant.Post("/v1/test_helpers/run_jobs");
+        Assert.Equal(1, f.WithDb(db => db.Notifications.Count(n => n.ObjectId == soon["id"]!.GetValue<string>() && n.Template == "invoice_due_soon")));
     }
 
     private static HttpRequestMessage Req(Api api, string path)
