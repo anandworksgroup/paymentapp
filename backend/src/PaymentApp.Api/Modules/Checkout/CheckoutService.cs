@@ -282,6 +282,19 @@ public class CheckoutService(AppDb db, Uow uow, CheckoutCalculator calc, Payment
 
         var prep = await uow.Run(async () =>
         {
+            // One payment in flight per session: concurrent confirms (double-clicks, retried requests with
+            // new keys) are refused rather than charging twice (§151).
+            if (s.ProcessingUntil > uow.Now) throw ApiException.Conflict("checkout_in_progress", "A payment for this checkout is already being processed.");
+            s.ProcessingUntil = uow.Now.AddMinutes(2);
+            // A new attempt supersedes an abandoned 3-D Secure challenge, which can then no longer complete.
+            foreach (var stale in await db.Payments.Where(p => p.CheckoutSessionId == s.Id && p.Status == "REQUIRES_ACTION").ToListAsync())
+            {
+                uow.Transition("payment", stale.Id, stale.Status, "CANCELLED", stale.OrgId, "superseded by a new checkout attempt");
+                stale.Status = "CANCELLED";
+                stale.NextActionJson = null;
+                stale.UpdatedAt = uow.Now;
+                uow.Emit("payment.cancelled", stale);
+            }
             var customer = s.CustomerId != null
                 ? await db.Customers.FirstAsync(c => c.Id == s.CustomerId)
                 : await db.Customers.FirstOrDefaultAsync(c => c.Email == email && c.AnonymizedAt == null);
@@ -350,25 +363,36 @@ public class CheckoutService(AppDb db, Uow uow, CheckoutCalculator calc, Payment
         });
 
         var (cust, ord, paymentMethod) = prep;
-        if (s.Total == 0)
+        try
         {
-            // Nothing due today (trial or full discount): verify the instrument and fulfil without charging.
-            if (paymentMethod == null && !string.IsNullOrEmpty(r.Token)) await payments.ResolveToken(null, r.Token);
-            await uow.Run(async () => { await billing.FulfilZeroTotalCheckout(s, cust, ord); });
-            return Result(s, null);
+            if (s.Total == 0)
+            {
+                // Nothing due today (trial or full discount): verify the instrument and fulfil without charging.
+                if (paymentMethod == null && !string.IsNullOrEmpty(r.Token)) await payments.ResolveToken(null, r.Token);
+                await uow.Run(async () => { await billing.FulfilZeroTotalCheckout(s, cust, ord); });
+                return Result(s, null);
+            }
+            if (string.IsNullOrEmpty(r.Token) && paymentMethod == null) throw ApiException.Invalid("A payment method is required.");
+            var invoiceId = s.SubscriptionId == null ? null : (await db.Subscriptions.FirstAsync(x => x.Id == s.SubscriptionId)).LatestInvoiceId;
+            var payment = await payments.Pay(new PayRequest(s.OrgId, s.Livemode, s.Total, s.Currency, s.Tax, country, cust.Id, email, country,
+                paymentMethod?.Id, paymentMethod == null ? r.Token : null, ord.Id, invoiceId, s.Id,
+                $"Checkout {s.Id}", false, ctx.Ip, ctx.DeviceId));
+            await uow.Run(async () =>
+            {
+                ord.PaymentId = payment.Id;
+                s.PaymentId = payment.Id;
+                await Task.CompletedTask;
+            });
+            return Result(s, payment);
         }
-        if (string.IsNullOrEmpty(r.Token) && paymentMethod == null) throw ApiException.Invalid("A payment method is required.");
-        var invoiceId = s.SubscriptionId == null ? null : (await db.Subscriptions.FirstAsync(x => x.Id == s.SubscriptionId)).LatestInvoiceId;
-        var payment = await payments.Pay(new PayRequest(s.OrgId, s.Livemode, s.Total, s.Currency, s.Tax, country, cust.Id, email, country,
-            paymentMethod?.Id, paymentMethod == null ? r.Token : null, ord.Id, invoiceId, s.Id,
-            $"Checkout {s.Id}", false, ctx.Ip, ctx.DeviceId));
-        await uow.Run(async () =>
+        finally
         {
-            ord.PaymentId = payment.Id;
-            s.PaymentId = payment.Id;
-            await Task.CompletedTask;
-        });
-        return Result(s, payment);
+            await uow.Run(async () =>
+            {
+                var fresh = await db.CheckoutSessions.FirstAsync(x => x.Id == s.Id);
+                fresh.ProcessingUntil = null;
+            });
+        }
     }
 
     public async Task<PaymentMethod> SavePaymentMethod(Customer customer, string token)

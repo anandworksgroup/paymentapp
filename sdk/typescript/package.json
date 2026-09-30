@@ -1,0 +1,19 @@
+{
+  "name": "@paymentapp/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the Monetization Platform API (server-side).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  },
+  "license": "UNLICENSED"
+}

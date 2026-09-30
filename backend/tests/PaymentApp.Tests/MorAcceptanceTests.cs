@@ -330,4 +330,31 @@ public class MorAcceptanceTests(ApiFactory f) : IClassFixture<ApiFactory>
         r.Headers.Add("X-Org-Id", api.OrgId);
         return r;
     }
+
+    [Fact]
+    public async Task Concurrent_confirms_on_one_session_charge_at_most_once()
+    {
+        var (merchant, _, _, priceId) = await Scenario.ApprovedMerchant(f, _http, "race@acme.test", "Race Co");
+        var session = await merchant.Post("/v1/checkout/sessions", new { mode = "payment", line_items = new[] { new { price_id = priceId, quantity = 1 } } }, 201);
+        var sid = session["id"]!.GetValue<string>();
+        var tokens = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Scenario.Card(merchant)));
+        var buyer = new Api(_http);
+        var results = await Task.WhenAll(tokens.Select((t, i) => buyer.Send(HttpMethod.Post, $"/v1/public/checkout/{sid}/confirm",
+            new { email = "race@example.com", country = "US", token = t, accept_terms = true }, $"race-{i}")));
+        Assert.All(results, r => Assert.True((int)r.Status is 200 or 409, r.Body?.ToJsonString()));
+        Assert.Equal(1, f.WithDb(db => db.Payments.Count(p => p.CheckoutSessionId == sid && p.AmountCaptured > 0)));
+    }
+
+    [Fact]
+    public async Task A_retry_after_an_abandoned_3ds_challenge_cancels_the_stale_payment()
+    {
+        var (merchant, _, _, priceId) = await Scenario.ApprovedMerchant(f, _http, "3ds@acme.test", "Challenge Co");
+        var (sid, first) = await Scenario.Buy(merchant, priceId, card: "4000002500003155", email: "3ds@example.com");
+        Assert.Equal("REQUIRES_ACTION", first["payment_status"]!.GetValue<string>());
+        var buyer = new Api(_http);
+        var second = await buyer.Post($"/v1/public/checkout/{sid}/confirm", new { email = "3ds@example.com", country = "US", token = await Scenario.Card(merchant), accept_terms = true });
+        Assert.Equal("SUCCEEDED", second["payment_status"]!.GetValue<string>());
+        Assert.Equal("CANCELLED", f.WithDb(db => db.Payments.First(p => p.Id == first["payment"]!.GetValue<string>()).Status));
+        Assert.Equal(1, f.WithDb(db => db.Payments.Count(p => p.CheckoutSessionId == sid && p.AmountCaptured > 0)));
+    }
 }

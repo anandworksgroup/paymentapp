@@ -1,0 +1,9 @@
+{
+  "name": "@paymentapp/cli",
+  "version": "0.1.0",
+  "description": "Developer CLI: manage test data, tail logs and forward webhooks to localhost.",
+  "type": "module",
+  "bin": { "platform": "./platform.mjs" },
+  "engines": { "node": ">=22" },
+  "license": "UNLICENSED"
+}

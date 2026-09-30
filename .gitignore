@@ -29,3 +29,6 @@ mobile/android/key.properties
 Thumbs.db
 .vscode/
 .idea/
+
+# SDK build output
+sdk/typescript/dist/
