@@ -12,6 +12,8 @@ User Requirements Specifications. There are three products on one financial core
   - refunds and disputes;
   - settlement, rolling reserves, payouts and statements;
   - webhooks, API keys, idempotency, test clocks, SDK and CLI;
+  - affiliates, customer usage budgets, retention offers, A/B experiments and multi-brand;
+  - revenue recognition, journal export, cohorts and churn, privacy exports and encrypted document storage;
   - an AI financial copilot.
 - **Global Wallet:** multi-currency balances, funding, internal and cross-currency transfers with binding FX quotes, withdrawals, holds and KYC-tiered limits.
 - **Admin & financial-crime console:**
@@ -88,7 +90,7 @@ Set `Anthropic:ApiKey` (or `ANTHROPIC_API_KEY`) for the API. The copilot uses `c
 ## Tests
 
 ```bash
-dotnet test backend/PaymentApp.slnx      # 43 unit + end-to-end acceptance tests
+dotnet test backend/PaymentApp.slnx      # 53 unit + end-to-end acceptance tests
 cd sdk/typescript && npm install && npm run build && npm test
 ```
 
