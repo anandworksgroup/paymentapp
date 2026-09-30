@@ -79,9 +79,11 @@ public static class AccountEndpoints
         me.MapGet("/", async (RequestContext ctx, AppDb db) =>
         {
             var user = ctx.RequireUser();
-            var memberships = await db.Memberships.Where(m => m.UserId == user.Id).ToListAsync();
+            var memberships = await db.Memberships.Where(m => m.UserId == user.Id && !m.Deprovisioned).ToListAsync();
             var orgIds = memberships.Select(m => m.OrgId).ToList();
             var orgs = await db.Organizations.Where(o => orgIds.Contains(o.Id)).ToListAsync();
+            var perms = new Dictionary<string, HashSet<string>>();
+            foreach (var m in memberships) perms[m.OrgId] = await RoleService.PermissionsFor(db, m.OrgId, m.Role);
             var wallet = await db.Wallets.FirstOrDefaultAsync(w => w.OwnerType == "user" && w.OwnerId == user.Id);
             return new
             {
@@ -89,7 +91,7 @@ public static class AccountEndpoints
                 organizations = orgs.Select(o =>
                 {
                     var role = memberships.First(m => m.OrgId == o.Id).Role;
-                    return new { o.Id, o.Name, o.Status, o.GoLiveState, o.Country, o.DefaultCurrency, role, permissions = Permissions.MerchantRoles.GetValueOrDefault(role) ?? [] };
+                    return new { o.Id, o.Name, o.Status, o.GoLiveState, o.Country, o.DefaultCurrency, role, permissions = perms[o.Id] };
                 }),
                 wallet = wallet == null ? null : new { wallet.Id, wallet.Handle, wallet.Status },
                 admin_permissions = ctx.AdminPermissions,
@@ -253,17 +255,23 @@ public static class AccountEndpoints
             var members = await db.Memberships.Where(m => m.OrgId == orgId).ToListAsync();
             var ids = members.Select(m => m.UserId).ToList();
             var users = await db.Users.Where(u => ids.Contains(u.Id)).ToDictionaryAsync(u => u.Id);
-            return new { @object = "list", data = members.Select(m => new { m.Id, m.Role, m.CreatedAt, user = new { users[m.UserId].Id, users[m.UserId].Name, users[m.UserId].Email, users[m.UserId].MfaEnabled } }), roles = Permissions.MerchantRoles };
+            var custom = await db.CustomRoles.ToDictionaryAsync(r => r.Key, r => r.Permissions);
+            return new
+            {
+                @object = "list",
+                data = members.Select(m => new { m.Id, m.Role, m.CreatedAt, status = m.Deprovisioned ? "deprovisioned" : "active", source = m.Source ?? "invite", m.ExternalId, user = new { users[m.UserId].Id, users[m.UserId].Name, users[m.UserId].Email, users[m.UserId].MfaEnabled } }),
+                roles = Permissions.MerchantRoles.Where(kv => kv.Key != "owner").ToDictionary(kv => kv.Key, kv => kv.Value).Concat(custom).ToDictionary(kv => kv.Key, kv => kv.Value),
+            };
         });
         org.MapPost("/team", async (MemberRequest r, RequestContext ctx, AppDb db, Uow uow) =>
         {
             var orgId = ctx.RequireOrg("team.manage");
-            if (!Permissions.MerchantRoles.ContainsKey(r.Role) || r.Role == "owner") throw ApiException.Invalid("Unknown or non-assignable role.");
+            if (!await RoleService.IsAssignable(db, orgId, r.Role)) throw ApiException.Invalid("Unknown or non-assignable role.");
             var user = await db.Users.FirstOrDefaultAsync(u => u.Email == r.Email.Trim().ToLowerInvariant()) ?? throw new ApiException(404, "user_not_found", "Ask them to create an account first, then add them.");
             if (await db.Memberships.AnyAsync(m => m.OrgId == orgId && m.UserId == user.Id)) throw ApiException.Conflict("already_member", "Already a member.");
             return await uow.Run(async () =>
             {
-                var m = new Membership { Id = Ids.New("mem"), CreatedAt = uow.Now, OrgId = orgId, UserId = user.Id, Role = r.Role };
+                var m = new Membership { Id = Ids.New("mem"), CreatedAt = uow.Now, OrgId = orgId, UserId = user.Id, Role = r.Role, Source = "invite" };
                 db.Memberships.Add(m);
                 uow.Audit("team.add", "membership", m.Id, after: new { user.Email, r.Role });
                 await Task.CompletedTask;
@@ -273,7 +281,7 @@ public static class AccountEndpoints
         org.MapPatch("/team/{id}", async (string id, MemberRequest r, RequestContext ctx, AppDb db, Uow uow) =>
         {
             var orgId = ctx.RequireOrg("team.manage");
-            if (!Permissions.MerchantRoles.ContainsKey(r.Role) || r.Role == "owner") throw ApiException.Invalid("Unknown or non-assignable role.");
+            if (!await RoleService.IsAssignable(db, orgId, r.Role)) throw ApiException.Invalid("Unknown or non-assignable role.");
             return await uow.Run(async () =>
             {
                 var m = await db.Memberships.FirstOrDefaultAsync(x => x.Id == id && x.OrgId == orgId) ?? throw ApiException.NotFound("member");

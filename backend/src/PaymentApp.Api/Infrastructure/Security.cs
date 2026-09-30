@@ -82,6 +82,8 @@ public class RequestContext
     public HashSet<string> Permissions { get; set; } = [];
     public HashSet<string> AdminPermissions { get; set; } = [];
     public bool IsSystem { get; set; }
+    public Modules.Identity.GeoPoint? Geo { get; set; }
+    public ScimToken? ScimToken { get; set; }
 
     public string ActorType => IsSystem ? "system" : ApiKey != null ? "api_key" : User?.PlatformRole != null && OrgId == null ? "admin" : User != null ? "user" : "anonymous";
     public string ActorId => IsSystem ? "system" : ApiKey?.Id ?? User?.Id ?? "anonymous";
@@ -124,8 +126,9 @@ public class RequestContext
 
 public class AuthMiddleware(RequestDelegate next)
 {
-    public async Task Invoke(HttpContext http, AppDb db, RequestContext ctx, TenantScope tenant, IClock clock)
+    public async Task Invoke(HttpContext http, AppDb db, RequestContext ctx, TenantScope tenant, IClock clock, Modules.Identity.IGeoLocator geo)
     {
+        ctx.Geo = geo.Locate(http.Request);
         ctx.Ip = http.Connection.RemoteIpAddress?.ToString();
         ctx.UserAgent = http.Request.Headers.UserAgent.ToString();
         ctx.DeviceId = http.Request.Headers["X-Device-Id"].FirstOrDefault();
@@ -137,9 +140,23 @@ public class AuthMiddleware(RequestDelegate next)
         {
             var token = auth[7..].Trim();
             if (token.StartsWith("sk_") || token.StartsWith("rk_")) await AuthenticateApiKey(token, db, ctx, tenant, clock);
+            else if (token.StartsWith("scim_")) await AuthenticateScim(token, http, db, ctx, tenant, clock);
             else await AuthenticateSession(token, http, db, ctx, tenant, clock);
         }
         await next(http);
+    }
+
+    /// <summary>SCIM tokens reach only the /scim endpoints of their own organization.</summary>
+    private static async Task AuthenticateScim(string token, HttpContext http, AppDb db, RequestContext ctx, TenantScope tenant, IClock clock)
+    {
+        if (!http.Request.Path.StartsWithSegments("/scim")) throw new ApiException(401, "invalid_token", "SCIM tokens can only call the SCIM API.");
+        var hash = Crypto.Sha256Hex(token);
+        var t = await db.ScimTokens.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.TokenHash == hash && x.RevokedAt == null)
+                ?? throw new ApiException(401, "invalid_token", "Invalid SCIM token.");
+        ctx.ScimToken = t;
+        ctx.OrgId = t.OrgId;
+        tenant.Set(t.OrgId, false);
+        if (t.LastUsedAt == null || t.LastUsedAt < clock.UtcNow.AddMinutes(-1)) { t.LastUsedAt = clock.UtcNow; await db.SaveChangesAsync(); }
     }
 
     private static async Task AuthenticateApiKey(string token, AppDb db, RequestContext ctx, TenantScope tenant, IClock clock)
@@ -186,7 +203,7 @@ public class AuthMiddleware(RequestDelegate next)
         var orgId = http.Request.Headers["X-Org-Id"].FirstOrDefault();
         if (!string.IsNullOrEmpty(orgId))
         {
-            var membership = await db.Memberships.FirstOrDefaultAsync(m => m.OrgId == orgId && m.UserId == user.Id)
+            var membership = await db.Memberships.FirstOrDefaultAsync(m => m.OrgId == orgId && m.UserId == user.Id && !m.Deprovisioned)
                              ?? throw ApiException.Forbidden("You are not a member of this organization.");
             var org = await db.Organizations.FirstAsync(o => o.Id == orgId);
             var live = string.Equals(http.Request.Headers["X-Livemode"].FirstOrDefault(), "true", StringComparison.OrdinalIgnoreCase);
@@ -194,7 +211,7 @@ public class AuthMiddleware(RequestDelegate next)
             ctx.OrgId = orgId;
             ctx.Livemode = live;
             ctx.MemberRole = membership.Role;
-            ctx.Permissions = Permissions.MerchantRoles.TryGetValue(membership.Role, out var p) ? p.ToHashSet() : [];
+            ctx.Permissions = await Modules.Identity.RoleService.PermissionsFor(db, orgId, membership.Role);
             tenant.Set(orgId, live);
         }
         if (session.LastSeenAt < now.AddMinutes(-1)) { session.LastSeenAt = now; user.LastActivityAt = now; await db.SaveChangesAsync(); }

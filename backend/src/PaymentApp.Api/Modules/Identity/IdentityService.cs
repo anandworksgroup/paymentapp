@@ -89,18 +89,35 @@ public class IdentityService(AppDb db, Uow uow, FieldEncryptor encryptor, Screen
             await Security(user?.Id, "login_failed", $"email={Mask.Email(email)}");
             throw new ApiException(401, "invalid_credentials", "Email or password is incorrect.");
         }
-        if (user.Status == "CLOSED") throw new ApiException(401, "account_closed", "This account is closed.");
-        var recentFailures = await db.SecurityEvents.CountAsync(e => e.UserId == user.Id && e.Type == "login_failed" && e.CreatedAt >= uow.Now.AddMinutes(-15));
-        if (recentFailures >= 10) throw new ApiException(429, "too_many_attempts", "Too many failed sign-in attempts. Try again in 15 minutes.");
+        await EnsureCanSignIn(user);
         if (user.MfaEnabled && totp != null && !Totp.Verify(encryptor.Decrypt(user.MfaSecretEnc!), totp, uow.Now))
             throw new ApiException(401, "invalid_mfa_code", "The authentication code is incorrect.");
-        var mfaPending = user.MfaEnabled && totp == null;
-        var (token, session) = await IssueSession(user, mfaPending);
-        await Security(user.Id, mfaPending ? "mfa_challenge" : "login", null);
+        return await CompleteSignIn(user, "password", mfaVerified: user.MfaEnabled && totp != null);
+    }
+
+    /// <summary>
+    /// Shared tail of every sign-in method (password, email code, magic link): account state, lockout,
+    /// MFA challenge when enabled, session and security event.
+    /// </summary>
+    public async Task EnsureCanSignIn(User user)
+    {
+        if (user.Status == "CLOSED" || user.DeletedAt != null) throw new ApiException(401, "account_closed", "This account is closed.");
+        var recentFailures = await db.SecurityEvents.CountAsync(e => e.UserId == user.Id && e.Type == "login_failed" && e.CreatedAt >= uow.Now.AddMinutes(-15));
+        if (recentFailures >= 10) throw new ApiException(429, "too_many_attempts", "Too many failed sign-in attempts. Try again in 15 minutes.");
+    }
+
+    public async Task<object> CompleteSignIn(User user, string method, bool mfaVerified = false)
+    {
+        await EnsureCanSignIn(user);
+        var mfaPending = user.MfaEnabled && !mfaVerified;
+        var (token, session) = await IssueSession(user, mfaPending, method);
+        await Security(user.Id, mfaPending ? "mfa_challenge" : "login", method);
         return new { @object = "session", token, mfa_required = mfaPending, expires_at = session.ExpiresAt, user = mfaPending ? null : user };
     }
 
-    public async Task<(string Token, Session Session)> IssueSession(User user, bool mfaPending)
+    public Task RecordSecurityEvent(string? userId, string type, string? detail) => Security(userId, type, detail);
+
+    public async Task<(string Token, Session Session)> IssueSession(User user, bool mfaPending, string method = "password")
     {
         var token = "ses_" + Crypto.RandomToken(32);
         var session = await uow.Run(async () =>
@@ -109,12 +126,14 @@ public class IdentityService(AppDb db, Uow uow, FieldEncryptor encryptor, Screen
             {
                 Id = Ids.New("ses"), CreatedAt = uow.Now, UserId = user.Id, TokenHash = Crypto.Sha256Hex(token), ExpiresAt = uow.Now.AddDays(mfaPending ? 0.01 : 14),
                 MfaPending = mfaPending, Ip = uow.Ctx.Ip, UserAgent = uow.Ctx.UserAgent, DeviceId = uow.Ctx.DeviceId, LastSeenAt = uow.Now,
+                GeoCountry = uow.Ctx.Geo?.Country, GeoLat = uow.Ctx.Geo?.Lat, GeoLon = uow.Ctx.Geo?.Lon, Method = method,
             };
             db.Sessions.Add(s);
             if (!mfaPending)
             {
                 user.LastLoginAt = uow.Now;
                 await TrackDevice(user);
+                await CheckTravel(user, s);
             }
             return s;
         });
@@ -140,6 +159,40 @@ public class IdentityService(AppDb db, Uow uow, FieldEncryptor encryptor, Screen
         device.LastIp = uow.Ctx.Ip;
     }
 
+    /// <summary>
+    /// Impossible travel (§112): a sign-in too far from the previous one for the time between them
+    /// (over 900 km/h across at least 500 km). Records a security event, emails the person and raises a
+    /// fraud alert; recent security events also feed the account-takeover monitoring rule.
+    /// </summary>
+    private async Task CheckTravel(User user, Session current)
+    {
+        if (current.GeoLat == null || current.GeoLon == null) return;
+        var previous = await db.Sessions.Where(x => x.UserId == user.Id && x.Id != current.Id && !x.MfaPending && x.GeoLat != null && x.GeoLon != null)
+            .OrderByDescending(x => x.LastSeenAt).FirstOrDefaultAsync();
+        if (previous == null) return;
+        var km = Geo.DistanceKm(previous.GeoLat!.Value, previous.GeoLon!.Value, current.GeoLat.Value, current.GeoLon.Value);
+        var hours = Math.Max((uow.Now - previous.LastSeenAt).TotalHours, 1.0 / 60);
+        var speed = km / hours;
+        if (km < 500 || speed <= 900) return;
+        var detail = $"{previous.GeoCountry ?? "?"} → {current.GeoCountry ?? "?"}: {km:N0} km in {hours * 60:N0} min ({speed:N0} km/h)";
+        db.SecurityEvents.Add(new SecurityEvent { Id = Ids.New("sev"), CreatedAt = uow.Now, UserId = user.Id, Type = "impossible_travel", Ip = uow.Ctx.Ip, DeviceId = current.DeviceId, Detail = detail });
+        db.Notifications.Add(new Notification
+        {
+            Id = Ids.New("ntf"), CreatedAt = uow.Now, UserId = user.Id, Channel = "email", Recipient = user.Email, Template = "unusual_sign_in", Category = "security", Status = "delivered",
+            Subject = $"New sign-in from {current.GeoCountry ?? "a new location"}",
+            Body = $"Your account was just signed into from {current.GeoCountry ?? "a new location"}, shortly after a sign-in from {previous.GeoCountry ?? "somewhere else"}. If this wasn't you, reset your password now — that signs out every device.",
+        });
+        var dedupe = $"travel:{user.Id}:{uow.Now:yyyyMMdd}";
+        if (!await db.Alerts.AnyAsync(a => a.DedupeKey == dedupe))
+            db.Alerts.Add(new Alert
+            {
+                Id = Ids.New("alt"), CreatedAt = uow.Now, Type = "fraud", RuleKey = "impossible_travel", SubjectType = "user", SubjectId = user.Id, Severity = "HIGH", Status = "NEW",
+                Summary = "Sign-ins from two distant places too close together",
+                ReasonsJson = Json.Serialize(new[] { new { code = "impossible_travel", text = detail, previous_session = previous.Id, session = current.Id } }),
+                DedupeKey = dedupe,
+            });
+    }
+
     public async Task<object> CompleteMfa(Session session, string code)
     {
         var user = await db.Users.FirstAsync(u => u.Id == session.UserId);
@@ -152,6 +205,7 @@ public class IdentityService(AppDb db, Uow uow, FieldEncryptor encryptor, Screen
             session.ExpiresAt = uow.Now.AddDays(14);
             user.LastLoginAt = uow.Now;
             await TrackDevice(user);
+            await CheckTravel(user, session);
             db.SecurityEvents.Add(new SecurityEvent { Id = Ids.New("sev"), CreatedAt = uow.Now, UserId = user.Id, Type = "login", Ip = uow.Ctx.Ip, Detail = "mfa" });
         });
         return new { @object = "session", mfa_required = false, user };

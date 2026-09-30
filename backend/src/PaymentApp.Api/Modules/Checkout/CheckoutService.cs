@@ -25,6 +25,7 @@ public class CheckoutCalculator(AppDb db)
     {
         if (requested.Count == 0) throw ApiException.Invalid("At least one line item is required.");
         if (requested.Count > 50) throw ApiException.Invalid("At most 50 line items.");
+        if (requested.Any(r => r == null || string.IsNullOrWhiteSpace(r.PriceId))) throw ApiException.Invalid("Each line item needs a price_id.");
         var priceIds = requested.Select(r => r.PriceId).Distinct().ToList();
         var prices = await db.Prices.Where(p => priceIds.Contains(p.Id)).ToDictionaryAsync(p => p.Id);
         var productIds = prices.Values.Select(p => p.ProductId).Distinct().ToList();

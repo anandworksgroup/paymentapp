@@ -23,21 +23,22 @@ public static class GrowthEndpoints
         files.MapPost("/files", async (IFormFile file, HttpRequest req, RequestContext ctx, FileService store) =>
         {
             var purpose = req.Form["purpose"].ToString();
-            ctx.RequireOrg(purpose == "dispute_evidence" ? "disputes.write" : "compliance.write");
+            ctx.RequireOrg(purpose switch { "dispute_evidence" => "disputes.write", "product_asset" => "products.write", _ => "compliance.write" });
             if (purpose == "kyc_document") throw ApiException.Invalid("kyc_document uploads belong to the signed-in person: use POST /v1/me/files.");
             return Results.Json(await store.Save(file, purpose, ctx.OrgId, null, ctx.Livemode), statusCode: 201);
         }).DisableAntiforgery().RequireRateLimiting("financial");
         files.MapGet("/files", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {
             var orgId = ctx.RequireOrg("compliance.read");
-            var q = db.Files.Where(f => f.OrgId == orgId && f.Livemode == ctx.Livemode);
+            // Exports hold customer data and are reached through /v1/exports (reports.read), not here.
+            var q = db.Files.Where(f => f.OrgId == orgId && f.Livemode == ctx.Livemode && f.Purpose != "export");
             if (req.Query["purpose"].FirstOrDefault() is { Length: > 0 } p) q = q.Where(f => f.Purpose == p);
             return await Paging.List(q, req);
         });
         files.MapPost("/files/{id}/link", async (string id, RequestContext ctx, AppDb db, FileService store, Uow uow) =>
         {
             var orgId = ctx.RequireOrg("compliance.read");
-            var f = await db.Files.FirstOrDefaultAsync(x => x.Id == id && x.OrgId == orgId && x.Livemode == ctx.Livemode) ?? throw ApiException.NotFound("file");
+            var f = await db.Files.FirstOrDefaultAsync(x => x.Id == id && x.OrgId == orgId && x.Livemode == ctx.Livemode && x.Purpose != "export") ?? throw ApiException.NotFound("file");
             return await Link(f, store, uow);
         });
         files.MapPost("/me/files", async (IFormFile file, RequestContext ctx, FileService store) =>
@@ -135,7 +136,7 @@ public static class GrowthEndpoints
         bud.MapGet("/", async (string customer, RequestContext ctx, AppDb db) =>
         {
             ctx.RequireOrg("usage.read");
-            var budgets = await db.CustomerBudgets.Where(b => b.CustomerId == customer).ToListAsync();
+            var budgets = await db.CustomerBudgets.Where(b => b.CustomerId == customer && b.Active).ToListAsync();
             var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             var list = new List<object>();
             foreach (var b in budgets)
@@ -289,8 +290,9 @@ public static class GrowthEndpoints
             {
                 var mine = sessions.Where(s => s.ExperimentVariant == prefix + v.Key).ToList();
                 var converted = mine.Count(s => s.Status == "complete");
-                var revenue = mine.Where(s => s.PaymentId != null && payments.ContainsKey(s.PaymentId)).Sum(s => payments[s.PaymentId!].Amount - payments[s.PaymentId!].TaxAmount);
-                return (Variant: v, Visits: mine.Count, Converted: converted, Revenue: revenue);
+                var paid = mine.Where(s => s.PaymentId != null && payments.ContainsKey(s.PaymentId)).Select(s => payments[s.PaymentId!]).ToList();
+                var byCurrency = paid.GroupBy(p => p.Currency).ToDictionary(g => g.Key, g => g.Sum(p => p.Amount - p.TaxAmount));
+                return (Variant: v, Visits: mine.Count, Converted: converted, Revenue: byCurrency);
             }).ToList();
             var control = rows[0];
             return new
@@ -300,7 +302,11 @@ public static class GrowthEndpoints
                 {
                     variant = r.Variant.Key, price_id = r.Variant.PriceId, coupon_code = r.Variant.CouponCode, visits = r.Visits, conversions = r.Converted,
                     conversion_rate_pct = r.Visits == 0 ? 0 : Math.Round(r.Converted * 100.0 / r.Visits, 2),
-                    revenue_excluding_tax = r.Revenue, revenue_per_visit = r.Visits == 0 ? 0 : r.Revenue / r.Visits,
+                    // Amounts in different currencies are never added together: the totals are only given when there's one currency.
+                    currency = r.Revenue.Count == 1 ? r.Revenue.Keys.First() : null,
+                    revenue_excluding_tax = r.Revenue.Count > 1 ? (long?)null : r.Revenue.Values.FirstOrDefault(),
+                    revenue_per_visit = r.Revenue.Count > 1 ? (long?)null : r.Visits == 0 ? 0 : r.Revenue.Values.FirstOrDefault() / r.Visits,
+                    revenue_by_currency = r.Revenue.Select(kv => new { currency = kv.Key, amount = kv.Value }),
                     lift_vs_control_pct = r.Variant.Key == control.Variant.Key || control.Visits == 0 || control.Converted == 0 ? (double?)null
                         : Math.Round(((double)r.Converted / Math.Max(1, r.Visits) / ((double)control.Converted / control.Visits) - 1) * 100, 1),
                     p_value = r.Variant.Key == control.Variant.Key ? null : TwoProportionP(control.Converted, control.Visits, r.Converted, r.Visits),

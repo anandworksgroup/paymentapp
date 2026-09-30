@@ -29,7 +29,7 @@ public interface IFulfillment
 /// transaction, state transition and outbox event.
 /// </summary>
 public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRouter router, IPaymentProvider sim,
-    IFulfillment fulfillment, IConfiguration config, Marketplace.MarketplaceService marketplace)
+    IFulfillment fulfillment, IConfiguration config, Marketplace.MarketplaceService marketplace, Risk.RiskRuleService rules)
 {
     private const int MaxProvidersPerPayment = 2;
 
@@ -64,14 +64,18 @@ public class PaymentService(AppDb db, Uow uow, LedgerService ledger, PaymentRout
                 Amount = r.Amount, Currency = r.Currency, TaxAmount = r.TaxAmount, CustomerId = r.CustomerId, CustomerEmail = r.Email,
                 Country = r.Country, OrderId = r.OrderId, InvoiceId = r.InvoiceId, CheckoutSessionId = r.CheckoutSessionId,
                 Description = r.Description, PaymentMethodType = info.Method, PaymentMethodId = info.PaymentMethodId,
-                CardBrand = info.Brand, Last4 = info.Last4, Ip = r.Ip, DeviceId = r.DeviceId, MetadataJson = r.MetadataJson, Status = "CREATED",
+                CardBrand = info.Brand, CardCountry = info.CardCountry, Last4 = info.Last4, Ip = r.Ip, DeviceId = r.DeviceId, MetadataJson = r.MetadataJson, Status = "CREATED",
             };
             p.MetadataJson ??= Json.Serialize(new Dictionary<string, string> { ["tax_country"] = r.TaxCountry ?? "" });
             db.Payments.Add(p);
             uow.Transition("payment", p.Id, null, "CREATED", r.OrgId);
 
-            var decision = await EvaluateRisk(p, info, org);
-            p.RiskScore = decision.Score;
+            var platformDecision = await EvaluateRisk(p, info, org);
+            p.RiskScore = platformDecision.Score;
+            // The merchant's own rules run after the platform's scoring and can only tighten it (§22).
+            var newCustomer = p.CustomerId == null || !await db.Payments.AnyAsync(x => x.CustomerId == p.CustomerId && x.Status == "SUCCEEDED");
+            var (decision, rule) = await rules.Apply(platformDecision, Risk.RiskRuleService.FactsFor(p, newCustomer));
+            p.RiskRuleId = rule?.Id;
             p.RiskAction = decision.Action;
             p.RiskReasonsJson = Json.Serialize(decision.Signals);
             if (decision.Action == "REVIEW") p.ReviewStatus = "pending";

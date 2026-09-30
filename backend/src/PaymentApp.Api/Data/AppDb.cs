@@ -135,6 +135,18 @@ public class AppDb(DbContextOptions<AppDb> options, TenantScope tenant) : DbCont
     public DbSet<Experiment> Experiments => Set<Experiment>();
     public DbSet<Brand> Brands => Set<Brand>();
     public DbSet<Seller> Sellers => Set<Seller>();
+    public DbSet<RiskRule> RiskRules => Set<RiskRule>();
+    public DbSet<ProductAsset> ProductAssets => Set<ProductAsset>();
+    public DbSet<DownloadGrant> DownloadGrants => Set<DownloadGrant>();
+    public DbSet<ExportJob> Exports => Set<ExportJob>();
+    public DbSet<RetentionPolicy> RetentionPolicies => Set<RetentionPolicy>();
+    public DbSet<RetentionRun> RetentionRuns => Set<RetentionRun>();
+    public DbSet<CustomRole> CustomRoles => Set<CustomRole>();
+    public DbSet<ScimToken> ScimTokens => Set<ScimToken>();
+    public DbSet<LoginChallenge> LoginChallenges => Set<LoginChallenge>();
+    public DbSet<BankStatement> BankStatements => Set<BankStatement>();
+    public DbSet<BankStatementLine> BankStatementLines => Set<BankStatementLine>();
+    public DbSet<PaymentRequest> PaymentRequests => Set<PaymentRequest>();
     public DbSet<SellerBalanceTransaction> SellerBalanceTransactions => Set<SellerBalanceTransaction>();
     public DbSet<SellerPayout> SellerPayouts => Set<SellerPayout>();
     public DbSet<AccountingPeriod> AccountingPeriods => Set<AccountingPeriod>();
@@ -216,6 +228,17 @@ public class AppDb(DbContextOptions<AppDb> options, TenantScope tenant) : DbCont
         b.Entity<CustomDomain>().HasIndex(d => d.Hostname);
         b.Entity<FeatureFlag>().HasIndex(f => f.Key).IsUnique();
         b.Entity<TicketMessage>().HasIndex(m => m.TicketId);
+        b.Entity<DownloadGrant>().HasIndex(g => g.TokenHash).IsUnique();
+        b.Entity<DownloadGrant>().HasIndex(g => g.EntitlementId);
+        b.Entity<ProductAsset>().HasIndex(a => a.ProductId);
+        b.Entity<RetentionPolicy>().HasIndex(p => p.DataClass).IsUnique();
+        b.Entity<CustomRole>().HasIndex(r => new { r.OrgId, r.Key }).IsUnique();
+        b.Entity<ScimToken>().HasIndex(t => t.TokenHash).IsUnique();
+        b.Entity<LoginChallenge>().HasIndex(c => c.TokenHash);
+        b.Entity<LoginChallenge>().HasIndex(c => new { c.Email, c.CreatedAt });
+        b.Entity<BankStatementLine>().HasIndex(l => l.StatementId);
+        b.Entity<BankStatementLine>().HasIndex(l => l.PayoutId);
+        b.Entity<PaymentRequest>().HasIndex(r => r.CheckoutSessionId).IsUnique();
 
         // Server-side tenant isolation: every merchant-owned query is scoped by org and mode.
         ApplyTenantFilter<Product>(b); ApplyTenantFilter<Price>(b); ApplyTenantFilter<Coupon>(b);
@@ -228,7 +251,9 @@ public class AppDb(DbContextOptions<AppDb> options, TenantScope tenant) : DbCont
         ApplyTenantFilter<UsageEvent>(b); ApplyTenantFilter<CreditLedgerEntry>(b); ApplyTenantFilter<TestClock>(b);
         ApplyTenantFilter<Payout>(b); ApplyTenantFilter<TaxRecord>(b); ApplyTenantFilter<WebhookEndpoint>(b);
         ApplyTenantFilter<WebhookDelivery>(b); ApplyTenantFilter<CopilotAction>(b); ApplyTenantFilter<AffiliateAccount>(b); ApplyTenantFilter<AffiliateReferral>(b); ApplyTenantFilter<AffiliateCommission>(b); ApplyTenantFilter<CustomerBudget>(b); ApplyTenantFilter<Experiment>(b); ApplyTenantFilter<SellerBalanceTransaction>(b); ApplyTenantFilter<SellerPayout>(b); ApplyTenantFilter<AccountingPeriod>(b); ApplyTenantFilter<ImportJob>(b);
-        ApplyOrgFilter<MerchantApplication>(b); ApplyOrgFilter<BeneficialOwner>(b); ApplyOrgFilter<PayoutDestination>(b); ApplyOrgFilter<Brand>(b); ApplyOrgFilter<Seller>(b); ApplyOrgFilter<CustomDomain>(b);
+        ApplyTenantFilter<RiskRule>(b); ApplyTenantFilter<ProductAsset>(b); ApplyTenantFilter<DownloadGrant>(b); ApplyTenantFilter<ExportJob>(b);
+        ApplyTenantFilter<BankStatement>(b); ApplyTenantFilter<BankStatementLine>(b); ApplyTenantFilter<PaymentRequest>(b);
+        ApplyOrgFilter<MerchantApplication>(b); ApplyOrgFilter<BeneficialOwner>(b); ApplyOrgFilter<PayoutDestination>(b); ApplyOrgFilter<Brand>(b); ApplyOrgFilter<Seller>(b); ApplyOrgFilter<CustomDomain>(b); ApplyOrgFilter<CustomRole>(b); ApplyOrgFilter<ScimToken>(b);
     }
 
     private void ApplyTenantFilter<T>(ModelBuilder b) where T : TenantEntity =>

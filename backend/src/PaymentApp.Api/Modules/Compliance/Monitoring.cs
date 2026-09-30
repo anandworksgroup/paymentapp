@@ -216,7 +216,7 @@ public class MonitoringService(AppDb db, Uow uow)
                 {
                     var window = uow.Now.AddMinutes(-L("minutes", 60));
                     var events = await db.SecurityEvents.Where(e => e.UserId == user.Id && e.CreatedAt >= window).Select(e => e.Type).ToListAsync();
-                    var signals = events.Where(e => e is "password_reset" or "new_device" or "mfa_disabled" or "bank_account_added").Distinct().ToList();
+                    var signals = events.Where(e => e is "password_reset" or "new_device" or "mfa_disabled" or "bank_account_added" or "impossible_travel").Distinct().ToList();
                     if (signals.Count >= 2 && usd >= L("min_usd", 20_000))
                         hits.Add(new(rule, [Reason("account_takeover_pattern", $"Recent security changes ({string.Join(", ", signals)}) followed by a {Money.Format(usd, "USD")} transfer.", signals.Count, 2)], [], []));
                     break;

@@ -45,11 +45,13 @@ function Detail({ d, reload }: { d: ExperimentDetail; reload: () => void }) {
   const basePrice = link ? names.price(link.price_id) : undefined;
 
   // The API reports revenue without a currency: it is the currency of the variant's price, else the link's price.
-  const currencyOf = (r: ExperimentResult) => (r.price_id ? names.price(r.price_id)?.currency : undefined) ?? basePrice?.currency ?? org.default_currency;
+  const currencyOf = (r: ExperimentResult) => r.currency ?? (r.price_id ? names.price(r.price_id)?.currency : undefined) ?? basePrice?.currency ?? org.default_currency;
+  const mixed = (r: ExperimentResult) => r.revenue_excluding_tax == null;
+  const mixedLabel = (r: ExperimentResult) => (r.revenue_by_currency ?? []).map((x) => money(x.amount, x.currency)).join(" + ");
   const totalWeight = x.variants.reduce((a, v) => a + v.weight, 0) || 1;
   const visits = d.results.reduce((a, r) => a + r.visits, 0);
   const conversions = d.results.reduce((a, r) => a + r.conversions, 0);
-  const best = [...d.results].sort((a, b) => b.revenue_per_visit - a.revenue_per_visit)[0];
+  const best = [...d.results].filter((r) => !mixed(r)).sort((a, b) => (b.revenue_per_visit ?? 0) - (a.revenue_per_visit ?? 0))[0];
   const canWrite = can("checkout.write");
 
   const run = async (what: "start" | "stop") => {
@@ -92,7 +94,7 @@ function Detail({ d, reload }: { d: ExperimentDetail; reload: () => void }) {
         <Stat label="Visits"><Count value={visits} /></Stat>
         <Stat label="Conversions"><Count value={conversions} /></Stat>
         <Stat label="Best revenue per visit" chip={best && best.visits > 0 ? <Chip tone="lemon" className="font-mono">{best.variant}</Chip> : undefined}>
-          {best && best.visits > 0 ? <Amount minor={best.revenue_per_visit} currency={currencyOf(best)} size="md" /> : <span className="numeral text-[26px] text-muted">—</span>}
+          {best && best.visits > 0 ? <Amount minor={best.revenue_per_visit ?? 0} currency={currencyOf(best)} size="md" /> : <span className="numeral text-[26px] text-muted">—</span>}
         </Stat>
       </section>
 
@@ -131,8 +133,8 @@ function Detail({ d, reload }: { d: ExperimentDetail; reload: () => void }) {
                 { key: "vis", header: "Visits", align: "right", render: (r) => <span className="numeral text-text-2">{r.visits.toLocaleString()}</span> },
                 { key: "conv", header: "Conversions", align: "right", render: (r) => <span className="numeral text-text-2">{r.conversions.toLocaleString()}</span> },
                 { key: "rate", header: "Rate", align: "right", render: (r) => <span className="numeral text-text">{r.conversion_rate_pct.toFixed(2)}%</span> },
-                { key: "rev", header: "Revenue", align: "right", render: (r) => <Amount minor={r.revenue_excluding_tax} currency={currencyOf(r)} size="sm" /> },
-                { key: "rpv", header: "Per visit", align: "right", render: (r) => <span className="whitespace-nowrap text-text-2">{money(r.revenue_per_visit, currencyOf(r))}</span> },
+                { key: "rev", header: "Revenue", align: "right", render: (r) => (mixed(r) ? <span className="whitespace-nowrap text-text-2">{mixedLabel(r)}</span> : <Amount minor={r.revenue_excluding_tax ?? 0} currency={currencyOf(r)} size="sm" />) },
+                { key: "rpv", header: "Per visit", align: "right", render: (r) => <span className="whitespace-nowrap text-text-2">{mixed(r) ? "—" : money(r.revenue_per_visit ?? 0, currencyOf(r))}</span> },
                 {
                   key: "lift",
                   header: "Lift",

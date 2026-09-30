@@ -51,6 +51,7 @@ public class ApiFactory : WebApplicationFactory<Program>
             ["Platform:BootstrapAdminEmail"] = "root@admin.test",
             ["Anthropic:ApiKey"] = "",
             ["Storage:Path"] = FilesPath,
+            ["Security:Geo:TrustEdgeHeaders"] = "true",
         }));
         builder.ConfigureServices(s =>
         {

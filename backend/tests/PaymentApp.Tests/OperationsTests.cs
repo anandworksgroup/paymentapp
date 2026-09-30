@@ -156,6 +156,8 @@ public class OperationsTests(ApiFactory f) : IClassFixture<ApiFactory>
         var list = (await merchant.Get("/v1/customers"))["data"]!.AsArray();
         Assert.DoesNotContain(list, c => c!["id"]!.GetValue<string>() == source);
         await merchant.Post($"/v1/customers/{source}/merge", new { into = target }, 409);
+        await merchant.Patch($"/v1/customers/{source}", new { name = "Edited tombstone" }, 409); // merged records are read-only
+        await merchant.Post("/v1/checkout/sessions", new { mode = "payment", line_items = new[] { new { price = priceId, quantity = 1 } } }, 400); // wrong key → 400, not 500
     }
 
     [Fact]

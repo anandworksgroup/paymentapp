@@ -23,7 +23,10 @@ export default function PayLinkPage() {
       try {
         const l = await api<LinkView>(`/v1/public/links/${id}`, { anonymous: true });
         setLink(l);
-        const s = await api<{ checkout_session: string }>(`/v1/public/links/${id}`, { method: "POST", anonymous: true });
+        // Affiliate links look like /pay/{id}?ref=CODE; the code is attributed when the checkout is created.
+        const ref = new URLSearchParams(window.location.search).get("ref")?.trim();
+        const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+        const s = await api<{ checkout_session: string }>(`/v1/public/links/${id}${query}`, { method: "POST", anonymous: true });
         router.replace(`/checkout/${s.checkout_session}`);
       } catch (e) {
         setError(e);

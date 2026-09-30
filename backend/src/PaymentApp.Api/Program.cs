@@ -75,6 +75,16 @@ builder.Services.AddScoped<PaymentApp.Api.Modules.Operations.ImportService>();
 builder.Services.AddScoped<PaymentApp.Api.Modules.Operations.FlagService>();
 builder.Services.AddScoped<PaymentApp.Api.Modules.Operations.DomainService>();
 builder.Services.AddSingleton<PaymentApp.Api.Modules.Operations.IDnsTxtResolver, PaymentApp.Api.Modules.Operations.DnsTxtResolver>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Risk.RiskRuleService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Delivery.DeliveryService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Platform.ExportService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Platform.RetentionService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Identity.PasswordlessService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Identity.RoleService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Identity.ScimService>();
+builder.Services.AddSingleton<PaymentApp.Api.Modules.Identity.IGeoLocator, PaymentApp.Api.Modules.Identity.EdgeGeoLocator>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Payouts.BankReconciliationService>();
+builder.Services.AddScoped<PaymentApp.Api.Modules.Checkout.PaymentRequestService>();
 builder.Services.AddHttpClient("anthropic", c => c.Timeout = TimeSpan.FromSeconds(60));
 
 var app = builder.Build();
@@ -125,6 +135,7 @@ TestHelperEndpoints.Map(app);
 CopilotEndpoints.Map(app);
 GrowthEndpoints.Map(app);
 OperationsEndpoints.Map(app);
+TrustEndpoints.Map(app);
 
 app.Run();
 
@@ -143,6 +154,9 @@ public static class ProductionGuard
         if (config.GetSection("Security:EncryptionKeys").GetChildren().All(c => string.IsNullOrEmpty(c.Value))) problems.Add("Security:EncryptionKeys is not configured");
         if (string.IsNullOrEmpty(config["Security:PortalTokenSecret"])) problems.Add("Security:PortalTokenSecret is not configured");
         if (config["Security:PortalTokenSecret"]?.StartsWith("dev-") == true) problems.Add("the portal token secret is the development value");
+        // Emailed links (sign-in, reset, downloads, payment requests) must point at the real public hosts.
+        foreach (var key in new[] { "Platform:WebUrl", "Platform:ApiUrl" })
+            if (!Uri.TryCreate(config[key], UriKind.Absolute, out var u) || u.Scheme != "https" || u.IsLoopback) problems.Add($"{key} must be the public https URL");
         if (problems.Count > 0) throw new InvalidOperationException("Refusing to start in Production: " + string.Join("; ", problems) + ".");
     }
 }

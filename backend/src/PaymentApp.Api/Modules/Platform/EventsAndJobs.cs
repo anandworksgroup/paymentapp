@@ -313,6 +313,8 @@ public class JobRunner(IServiceScopeFactory scopes, IClock clock, ILogger<JobRun
         await Step("seller_settlement", sp => sp.GetRequiredService<Marketplace.MarketplaceService>().SettleSellers(now));
         await Step("seller_payouts", sp => sp.GetRequiredService<Marketplace.MarketplaceService>().ProcessPayouts());
         await Step("invoice_reminders", sp => sp.GetRequiredService<Notifier>().InvoiceReminders(now));
+        await Step("exports", sp => sp.GetRequiredService<ExportService>().ProcessQueued());
+        await Step("retention", sp => sp.GetRequiredService<RetentionService>().RunDaily());
         await Step("outbox", sp => sp.GetRequiredService<OutboxProcessor>().ProcessBatch());
         await Step("webhooks", sp => sp.GetRequiredService<WebhookSender>().SendDue());
         return results;

@@ -30,21 +30,21 @@ UI coverage per area is in the last section.
 | URS | Requirement | Status | Where / notes |
 |---|---|---|---|
 | §5-§7, §77 | Roles and resource permissions; MFA (TOTP + recovery codes); sessions; devices | Built | `Permissions`, `IdentityService` |
-| §7 | Email OTP, magic link, Google/Apple/Microsoft, passkeys | Not built | |
+| §7 | Email OTP, magic link, password reset; Google/Apple/Microsoft, passkeys | Partial | Email code + magic link (hashed, single-use, 10 min, 5 tries, no account enumeration) and password reset (signs out every session) are built and tested; social sign-in and passkeys are not built |
 | §8-§12, §156, §222-§224 | Onboarding, KYB, beneficial owners, screening, review, checklist, go-live | Built | `MerchantService` |
 | §12-§13, §184-§185 | Products; all pricing models; price versioning; archive | Built | `PricingEngine`; EngineTests |
 | §102 | Multi-brand | Built | `Brand` shown on checkout |
 | §103 | Multi-entity legal separation | Not built | |
 | §106 | Country / PPP price overrides | Built | `country_amounts` |
 | §15-§16, §87-§89, §225 | Hosted checkout, localization inputs, seller of record, terms version | Built | `CheckoutService`, public endpoints |
-| §15 | Embedded / overlay checkout | Partial | Hosted page only; no embeddable JS widget |
+| §15 | Embedded / overlay checkout | Partial | `public/embed.js` modal + embed mode posting results only to the verified parent origin; no per-merchant frame-ancestors allow-list yet |
 | §48, §127 | Payment links (share, QR) | Built | QR rendering is in the UI |
 | §49-§50, §243 | Coupons, promotions, auto-apply, atomic redemption | Built | |
 | §108 | A/B experiments | Built | Payment-link experiments with p-values |
 | §51 | Affiliates | Built | Attribution, commissions, ledger accrual, payout, reversal |
 | §52, §182, §291-§293 | Entitlements, license keys, revocation | Built | |
-| §52, §291 | Signed download delivery of digital goods | Not built | Files exist for compliance documents only |
-| §253-§254 | Sales-assisted custom checkout / payment requests | Partial | Customer-specific coupons, manual invoices |
+| §52, §291 | Signed download delivery of digital goods | Built | Product assets (ZIP/PDF/images/text, encrypted); per-purchase download grants with hashed tokens, download limits, expiry, link rotation, merchant reset; revoked with the entitlement on refund; TrustTests |
+| §253-§254 | Sales-assisted custom checkout / payment requests | Built | Payment requests: custom amount emailed as a hosted checkout locked to the customer; paid/cancelled/expired tracking, reminders; TrustTests |
 
 ## Merchant of Record: payments
 
@@ -54,7 +54,7 @@ UI coverage per area is in the last section.
 | §18, §72, §286-§288 | Routing rules, percentage routing, health, failover | Built | `PaymentRouter`; failover test |
 | §21 | Smart retries: failover on provider errors only, never on issuer declines | Built | |
 | §22, §192 | Explainable risk scoring (allow / review / challenge / decline) | Built | `RiskEngine` |
-| §22 | Merchant-defined risk rules | Not built | Platform thresholds are configuration |
+| §22 | Merchant-defined risk rules | Built | Rules on amount, country, card country, email/domain, IP, score, method, brand, new customer; block/review/challenge/allow (never overriding a platform decline); 30-day backtest; hit counts; TrustTests |
 | §226 | 3-D Secure challenge | Sandbox | |
 | §227 | Provider webhooks: signed, deduplicated, stored | Built | |
 | §73 | Failure codes with customer text and suggested action | Built | `DeclineCatalog` |
@@ -95,7 +95,7 @@ UI coverage per area is in the last section.
 | §163-§165 | Fee transparency; monthly statement that reconciles | Built | |
 | §121 | Configurable, versioned fee schedules | Built | |
 | §42, §155, §228 | Provider reconciliation and exceptions | Built | |
-| §229 | Bank-statement reconciliation | Partial | Payout rail outcome only |
+| §229 | Bank-statement reconciliation | Built | CSV statements (amount or credit/debit, several number formats) matched to paid payouts by reference, then amount+date; unknown deposits, ignored lines with reasons, payouts missing from the statement; TrustTests. No live bank feed |
 | §230-§231 | Accounting close / period lock | Built | `PeriodCloseService`: blocking checklist, SHA-256 snapshot of closing balances + statements, re-verify; append-only ledger means closed months can't change; OperationsTests |
 | §99 | Accounting export | Built | Balanced journal JSON/CSV. Native QuickBooks/Xero connectors are not built |
 | §263 | Revenue recognition | Built | Ratable report; not booked in the GL |
@@ -116,13 +116,13 @@ UI coverage per area is in the last section.
 | §159 | Key types (publishable, secret, restricted, test/live), IP allow-list | Built | |
 | §62-§63, §124-§125 | Notifications, templates with versions | Partial | Email goes to a dev outbox; push is the in-app feed; SMS not built |
 | §96 | Encrypted document storage, signed links | Built | Malware-scan hook reports `not_scanned` |
-| §97 | Asynchronous large exports | Partial | Synchronous CSV/JSON |
+| §97 | Asynchronous large exports | Built | Queued exports (payments, refunds, customers, invoices, subscriptions, balance transactions, disputes) built by the job runner, encrypted, signed-link download, 7-day expiry; TrustTests |
 | §74, §299 | Privacy: export, anonymize | Built | Formal request-workflow tracking not built |
-| §115 | Configurable retention | Not built | |
+| §115 | Configurable retention | Built | Per-class policies with floors (logs, deliveries, notifications, sessions, security events, sign-in codes, exports), dry run, daily job, legal holds respected; financial records excluded; TrustTests |
 | §46-§47, §109, §169, §325-§327 | AI copilot (grounded tools, drafts need confirmation, data-used trace) | Built | Needs an Anthropic API key; the AI developer assistant and revenue-optimization recommendations are not built |
 | §119 | Feature flags | Built | Environment, org allow-list, country, deterministic % rollout; gates marketplace, domains, copilot; audited admin edits; OperationsTests |
 | §110-§111 | Support tickets, incident management | Built | Tickets with staff-only internal notes and account context; incidents with updates, merchant banner feed and public status; OperationsTests |
-| §173 | SSO/SAML, SCIM, custom roles | Not built | |
+| §173 | SSO/SAML, SCIM, custom roles | Partial | Custom roles and SCIM 2.0 Users (provision, filter, PATCH/PUT, deprovision, delete; owner protected) are built and tested; SAML/OIDC single sign-on is not built |
 | §176-§177 | Custom domains / DNS validation | Partial | DNS TXT challenge verification is built and tested; serving pages on the custom host needs edge/TLS setup in production |
 | §187-§189 | Imports / migration wizard | Built | CSV (RFC 4180) / JSON customers and products; row-level preview (valid / invalid / duplicate) before commit; OperationsTests |
 | §186 | Customer merge | Built | Moves history; credits move by paired ledger entries; tombstone with `merged_into_id`; duplicate candidates endpoint; OperationsTests |
@@ -155,7 +155,7 @@ UI coverage per area is in the last section.
 | §85-§89, §129-§133 | Role separation (support / finance / AML / auditor) | Built | |
 | §134, §136-§137, §298 | Access logging, export reasons, masking | Built | |
 | §93, §100, §157 | Regulatory report package | Partial | Evidence-linked package plus legal hold; filing adapters not built |
-| §112 | Impossible-travel signals | Not built | |
+| §112 | Impossible-travel signals | Built | Location from trusted edge headers; >900 km/h over ≥500 km raises a security event, an email and a fraud alert, and feeds the account-takeover rule; TrustTests |
 | §172-§175 | ML models and governance | Not built | Rules only |
 
 ## User interfaces
@@ -175,4 +175,3 @@ All surfaces use the reference design in `docs/DESIGN.md`: Inter, sage canvas, l
 - There are no push notifications (in-app feed only) and no home-screen widgets (§126).
 - The analytics 12-month view is daily bars.
 - Admin country flows aggregate at most 1,000 transfers client-side.
-- The embeddable checkout widget is not built.

@@ -17,7 +17,7 @@ public class BillingClock(AppDb db, IClock clock)
     }
 }
 
-public class EntitlementService(AppDb db, Uow uow)
+public class EntitlementService(AppDb db, Uow uow, Delivery.DeliveryService delivery)
 {
     public async Task<Entitlement> Grant(string customerId, string productId, string sourceType, string sourceId, long seats = 1, DateTime? expiresAt = null)
     {
@@ -44,6 +44,7 @@ public class EntitlementService(AppDb db, Uow uow)
         };
         db.Entitlements.Add(e);
         uow.Emit("entitlement.granted", e);
+        await delivery.IssueFor(e);
         return e;
     }
 
@@ -106,6 +107,7 @@ public class Fulfillment(AppDb db, Uow uow, EntitlementService entitlements, Cre
         s.CompletedAt = uow.Now;
         s.PaymentId = p?.Id;
         await affiliates.Attribute(s);
+        await Checkout.PaymentRequestService.OnCheckoutComplete(db, uow, s, p);
         if (s.PaymentLinkId != null)
         {
             var link = await db.PaymentLinks.FirstOrDefaultAsync(l => l.Id == s.PaymentLinkId);

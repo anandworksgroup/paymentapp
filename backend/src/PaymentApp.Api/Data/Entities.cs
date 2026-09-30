@@ -73,6 +73,12 @@ public class Session : Entity
     public string? UserAgent { get; set; }
     public string? DeviceId { get; set; }
     public DateTime LastSeenAt { get; set; }
+    /// <summary>Approximate sign-in location from the trusted edge (§112).</summary>
+    public string? GeoCountry { get; set; }
+    public double? GeoLat { get; set; }
+    public double? GeoLon { get; set; }
+    /// <summary>password | email_otp | magic_link | signup.</summary>
+    public string? Method { get; set; }
 }
 
 public class Device : Entity
@@ -138,6 +144,11 @@ public class Membership : Entity
     public string OrgId { get; set; } = "";
     public string UserId { get; set; } = "";
     public string Role { get; set; } = "owner";
+    /// <summary>Deprovisioned members keep their record (SCIM active=false) but lose all access.</summary>
+    public bool Deprovisioned { get; set; }
+    public string? ExternalId { get; set; }
+    /// <summary>invite | scim.</summary>
+    public string? Source { get; set; }
 }
 
 public class ApiKey : Entity
@@ -558,12 +569,14 @@ public class Payment : TenantEntity, IHasMetadata
     public string? PaymentMethodType { get; set; }
     public string? PaymentMethodId { get; set; }
     public string? CardBrand { get; set; }
+    public string? CardCountry { get; set; }
     public string? Last4 { get; set; }
     public string? Country { get; set; }
     public int RiskScore { get; set; }
     /// <summary>ALLOW | REVIEW | CHALLENGE | DECLINE (§22).</summary>
     public string? RiskAction { get; set; }
     [JsonIgnore] public string? RiskReasonsJson { get; set; }
+    public string? RiskRuleId { get; set; }
     [NotMapped] public JsonElement? RiskReasons => Json.Raw(RiskReasonsJson);
     public string ReviewStatus { get; set; } = "none";
     public string? FailureCode { get; set; }
@@ -1872,4 +1885,204 @@ public class FeatureFlag : Entity
     public string? CountriesCsv { get; set; }
     public string Environment { get; set; } = "*";
     public DateTime UpdatedAt { get; set; }
+}
+
+
+// ───────────────────────── Merchant risk rules (§22) ─────────────────────────
+
+public class RiskRule : TenantEntity
+{
+    public override string Object => "risk_rule";
+    public string Name { get; set; } = "";
+    /// <summary>amount_usd | currency | customer_country | card_country | email | email_domain | ip | risk_score | payment_method | card_brand | new_customer.</summary>
+    public string Field { get; set; } = "";
+    /// <summary>eq | neq | in | not_in | gt | gte | lt | lte | contains.</summary>
+    public string Operator { get; set; } = "eq";
+    public string Value { get; set; } = "";
+    /// <summary>block | review | challenge | allow.</summary>
+    public string Action { get; set; } = "review";
+    public bool Enabled { get; set; } = true;
+    public int Priority { get; set; } = 100;
+    public long Hits { get; set; }
+    public DateTime? LastHitAt { get; set; }
+    public string CreatedBy { get; set; } = "";
+    public DateTime UpdatedAt { get; set; }
+}
+
+// ───────────────────────── Digital delivery (§52, §291) ─────────────────────────
+
+public class ProductAsset : TenantEntity
+{
+    public override string Object => "product_asset";
+    public string ProductId { get; set; } = "";
+    public string FileId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public int MaxDownloads { get; set; } = 5;
+    /// <summary>Days a buyer's download link stays valid after purchase; 0 = no expiry.</summary>
+    public int LinkDays { get; set; } = 30;
+    public bool Active { get; set; } = true;
+}
+
+public class DownloadGrant : TenantEntity
+{
+    public override string Object => "download_grant";
+    public string EntitlementId { get; set; } = "";
+    public string CustomerId { get; set; } = "";
+    public string ProductId { get; set; } = "";
+    public string AssetId { get; set; } = "";
+    public string FileId { get; set; } = "";
+    public string AssetName { get; set; } = "";
+    [JsonIgnore] public string TokenHash { get; set; } = "";
+    public int Downloads { get; set; }
+    public int MaxDownloads { get; set; } = 5;
+    public DateTime? ExpiresAt { get; set; }
+    public DateTime? LastDownloadAt { get; set; }
+    public string? LastIp { get; set; }
+}
+
+// ───────────────────────── Asynchronous exports (§97) ─────────────────────────
+
+public class ExportJob : TenantEntity
+{
+    public override string Object => "export";
+    /// <summary>payments | refunds | customers | invoices | subscriptions | balance_transactions | disputes.</summary>
+    public string Type { get; set; } = "";
+    public string Format { get; set; } = "csv";
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    /// <summary>queued | running | completed | failed | expired.</summary>
+    public string Status { get; set; } = "queued";
+    public int Rows { get; set; }
+    public string? FileId { get; set; }
+    public string? Error { get; set; }
+    public string RequestedBy { get; set; } = "";
+    public DateTime? StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+}
+
+// ───────────────────────── Data retention (§115) ─────────────────────────
+
+public class RetentionPolicy : Entity
+{
+    public override string Object => "retention_policy";
+    public string DataClass { get; set; } = "";
+    public string Description { get; set; } = "";
+    public int Days { get; set; }
+    public int MinimumDays { get; set; }
+    public bool Enabled { get; set; } = true;
+    public DateTime UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+}
+
+public class RetentionRun : Entity
+{
+    public override string Object => "retention_run";
+    public bool DryRun { get; set; }
+    public string TriggeredBy { get; set; } = "";
+    [JsonIgnore] public string CountsJson { get; set; } = "{}";
+    [NotMapped] public JsonElement? Counts => Json.Raw(CountsJson);
+    public int HeldSubjects { get; set; }
+    public DateTime? CompletedAt { get; set; }
+}
+
+// ───────────────────────── Custom roles and SCIM (§173) ─────────────────────────
+
+public class CustomRole : TenantEntityNoMode
+{
+    public override string Object => "role";
+    /// <summary>"custom:{slug}" — stored as Membership.Role.</summary>
+    public string Key { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string? Description { get; set; }
+    [JsonIgnore] public string PermissionsJson { get; set; } = "[]";
+    [NotMapped] public string[] Permissions => Json.Deserialize<string[]>(PermissionsJson) ?? [];
+    public DateTime UpdatedAt { get; set; }
+}
+
+public class ScimToken : TenantEntityNoMode
+{
+    public override string Object => "scim_token";
+    [JsonIgnore] public string TokenHash { get; set; } = "";
+    public string Last4 { get; set; } = "";
+    public string DefaultRole { get; set; } = "analyst";
+    public string CreatedBy { get; set; } = "";
+    public DateTime? RevokedAt { get; set; }
+    public DateTime? LastUsedAt { get; set; }
+}
+
+// ───────────────────────── Passwordless sign-in (§7) ─────────────────────────
+
+public class LoginChallenge : Entity
+{
+    public override string Object => "login_challenge";
+    public string UserId { get; set; } = "";
+    public string Email { get; set; } = "";
+    /// <summary>sign_in | password_reset.</summary>
+    public string Purpose { get; set; } = "sign_in";
+    [JsonIgnore] public string CodeHash { get; set; } = "";
+    [JsonIgnore] public string TokenHash { get; set; } = "";
+    public DateTime ExpiresAt { get; set; }
+    public int Attempts { get; set; }
+    public DateTime? ConsumedAt { get; set; }
+    public string? ConsumedBy { get; set; }
+    public string? Ip { get; set; }
+}
+
+// ───────────────────────── Bank-statement reconciliation (§229) ─────────────────────────
+
+public class BankStatement : TenantEntity
+{
+    public override string Object => "bank_statement";
+    public string AccountLabel { get; set; } = "";
+    public string Currency { get; set; } = "USD";
+    public DateTime? PeriodStart { get; set; }
+    public DateTime? PeriodEnd { get; set; }
+    public int Lines { get; set; }
+    public int Matched { get; set; }
+    public int Unmatched { get; set; }
+    public int Ignored { get; set; }
+    public string CreatedBy { get; set; } = "";
+}
+
+public class BankStatementLine : TenantEntity
+{
+    public override string Object => "bank_statement_line";
+    public string StatementId { get; set; } = "";
+    public int LineNumber { get; set; }
+    public DateTime Date { get; set; }
+    /// <summary>Signed minor units: credits positive, debits negative.</summary>
+    public long Amount { get; set; }
+    public string Currency { get; set; } = "USD";
+    public string? Reference { get; set; }
+    public string? Description { get; set; }
+    /// <summary>matched | unmatched | ignored.</summary>
+    public string Status { get; set; } = "unmatched";
+    public string? PayoutId { get; set; }
+    /// <summary>reference | amount_date | manual.</summary>
+    public string? MatchMethod { get; set; }
+    public string? Note { get; set; }
+}
+
+// ───────────────────────── Payment requests (§253, §254) ─────────────────────────
+
+public class PaymentRequest : TenantEntity
+{
+    public override string Object => "payment_request";
+    public string? CustomerId { get; set; }
+    public string Email { get; set; } = "";
+    public long Amount { get; set; }
+    public string Currency { get; set; } = "USD";
+    public string Description { get; set; } = "";
+    public string? Note { get; set; }
+    public string PriceId { get; set; } = "";
+    public string CheckoutSessionId { get; set; } = "";
+    /// <summary>open | paid | cancelled | expired.</summary>
+    public string Status { get; set; } = "open";
+    public string? PaymentId { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? PaidAt { get; set; }
+    public DateTime? LastSentAt { get; set; }
+    public int Reminders { get; set; }
+    public string CreatedBy { get; set; } = "";
 }

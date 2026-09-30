@@ -204,8 +204,11 @@ export type ExperimentResult = {
   visits: number;
   conversions: number;
   conversion_rate_pct: number;
-  revenue_excluding_tax: number;
-  revenue_per_visit: number;
+  /** Set when the variant's revenue is in a single currency; the totals below are null when it's mixed. */
+  currency?: string | null;
+  revenue_excluding_tax: number | null;
+  revenue_per_visit: number | null;
+  revenue_by_currency?: { currency: string; amount: number }[];
   lift_vs_control_pct: number | null;
   p_value: number | null;
 };

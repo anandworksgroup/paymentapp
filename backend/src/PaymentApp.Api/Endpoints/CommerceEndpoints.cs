@@ -207,12 +207,17 @@ public static class CommerceEndpoints
         v1.MapPatch("/brands/{id}", async (string id, BrandRequest r, RequestContext ctx, AppDb db, Uow uow) =>
         {
             ctx.RequireOrg("org.manage");
+            if (r.Name != null && string.IsNullOrWhiteSpace(r.Name)) throw ApiException.Invalid("name can't be empty.");
+            if (!string.IsNullOrEmpty(r.Color) && !System.Text.RegularExpressions.Regex.IsMatch(r.Color, "^#[0-9a-fA-F]{6}$")) throw ApiException.Invalid("color must be a #RRGGBB hex value.");
+            // Omitted = unchanged; "" = cleared, so checkout falls back to the organization's value.
+            static string? Opt(string? value, string? current) => value == null ? current : value.Trim().Length == 0 ? null : value.Trim();
             return await uow.Run(async () =>
             {
                 var b = await db.Brands.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("brand");
-                b.Name = r.Name ?? b.Name; b.LogoUrl = r.LogoUrl ?? b.LogoUrl; b.Color = r.Color ?? b.Color; b.SupportEmail = r.SupportEmail ?? b.SupportEmail;
-                b.Website = r.Website ?? b.Website; b.Active = r.Active ?? b.Active;
-                uow.Audit("brand.update", "brand", b.Id);
+                var before = new { b.Name, b.LogoUrl, b.Color, b.SupportEmail, b.Website, b.Active };
+                b.Name = r.Name?.Trim() ?? b.Name; b.LogoUrl = Opt(r.LogoUrl, b.LogoUrl); b.Color = Opt(r.Color, b.Color); b.SupportEmail = Opt(r.SupportEmail, b.SupportEmail);
+                b.Website = Opt(r.Website, b.Website); b.Active = r.Active ?? b.Active;
+                uow.Audit("brand.update", "brand", b.Id, before, new { b.Name, b.LogoUrl, b.Color, b.SupportEmail, b.Website, b.Active });
                 await Task.CompletedTask;
                 return b;
             });
@@ -338,6 +343,7 @@ public static class CommerceEndpoints
             return await uow.Run(async () =>
             {
                 var c = await db.Customers.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("customer");
+                if (c.MergedIntoId != null) throw ApiException.Conflict("customer_merged", $"This customer was merged into {c.MergedIntoId} and is read-only.");
                 c.Email = r.Email?.ToLowerInvariant() ?? c.Email; c.Name = r.Name ?? c.Name; c.Phone = r.Phone ?? c.Phone; c.Country = r.Country?.ToUpperInvariant() ?? c.Country;
                 c.TaxId = r.TaxId ?? c.TaxId; c.CustomerType = r.CustomerType ?? c.CustomerType; c.PostalCode = r.PostalCode ?? c.PostalCode; c.AddressLine = r.AddressLine ?? c.AddressLine;
                 c.PaymentTermsDays = r.PaymentTermsDays ?? c.PaymentTermsDays; c.CreditLimit = r.CreditLimit ?? c.CreditLimit; c.TaxStatus = r.TaxStatus ?? c.TaxStatus;
