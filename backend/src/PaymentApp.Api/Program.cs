@@ -70,6 +70,9 @@ var app = builder.Build();
 
 ProductionGuard.Check(app.Environment, config);
 
+
+if (app.Environment.IsProduction() && (args.Contains("--reset") || args.Contains("seed")))
+    throw new InvalidOperationException("Refusing to reset or seed a Production database.");
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDb>();
@@ -122,7 +125,10 @@ public static class ProductionGuard
         if (!env.IsProduction()) return;
         var problems = new List<string>();
         if (config["Security:EncryptionKeys:dev"] != null) problems.Add("the development encryption key is still configured");
-        if ((config.GetConnectionString("Default") ?? "").Contains("paymentapp.db")) problems.Add("the database is the local SQLite development file");
+        var cs = config.GetConnectionString("Default");
+        if (cs == null || cs.Contains("paymentapp.db")) problems.Add("ConnectionStrings:Default is missing or points at the local SQLite development file");
+        if (config.GetSection("Security:EncryptionKeys").GetChildren().All(c => string.IsNullOrEmpty(c.Value))) problems.Add("Security:EncryptionKeys is not configured");
+        if (string.IsNullOrEmpty(config["Security:PortalTokenSecret"])) problems.Add("Security:PortalTokenSecret is not configured");
         if (config["Security:PortalTokenSecret"]?.StartsWith("dev-") == true) problems.Add("the portal token secret is the development value");
         if (problems.Count > 0) throw new InvalidOperationException("Refusing to start in Production: " + string.Join("; ", problems) + ".");
     }

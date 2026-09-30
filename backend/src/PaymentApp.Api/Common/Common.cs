@@ -83,7 +83,9 @@ public interface IClock
 
 public class SystemClock : IClock
 {
-    public DateTime UtcNow => DateTime.UtcNow;
+    /// <summary>Only the demo seeder moves this, to back-date sample history. Always zero at runtime.</summary>
+    public TimeSpan Offset { get; set; }
+    public DateTime UtcNow => DateTime.UtcNow + Offset;
 }
 
 public static class Crypto

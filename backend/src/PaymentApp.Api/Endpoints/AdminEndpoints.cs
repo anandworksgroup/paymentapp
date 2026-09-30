@@ -500,7 +500,7 @@ public static class AdminEndpoints
                 children = await db.LedgerTransactions.Where(x => x.ParentTransactionId == id || x.ReversesTransactionId == id).ToListAsync(),
             };
         });
-        a.MapPost("/reconciliation/run", async (RequestContext ctx, ReconciliationService recon) => { ctx.RequireAdmin("admin.recon.read"); return await recon.Run(ctx.ActorId); });
+        a.MapPost("/reconciliation/run", async (RequestContext ctx, ReconciliationService recon) => { ctx.RequireAdmin("admin.recon.resolve"); return await recon.Run(ctx.ActorId); });
         a.MapGet("/reconciliation/runs", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireAdmin("admin.recon.read"); return await Paging.List(db.ReconRuns, req); });
         a.MapGet("/reconciliation/exceptions", async (HttpRequest req, RequestContext ctx, AppDb db) =>
         {
