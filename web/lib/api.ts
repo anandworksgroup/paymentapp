@@ -73,7 +73,7 @@ export const session = {
 };
 
 type Options = {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   /** Send without the org header (e.g. admin console, /v1/me). */
   noOrg?: boolean;

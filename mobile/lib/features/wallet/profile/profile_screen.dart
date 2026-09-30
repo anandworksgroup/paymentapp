@@ -7,13 +7,16 @@ import '../../../shared/loaded_page.dart';
 import '../../../theme/kit.dart';
 import '../../common/mode_switcher.dart';
 import '../../common/navigation.dart';
+import '../../common/notification_center.dart';
 import '../../common/notifications_screen.dart';
 import '../../common/security_screen.dart';
 import '../../common/settings_screen.dart';
 import '../kyc/kyc_screen.dart';
 import '../wallet_model.dart';
+import 'limits_usage.dart';
 
-/// Profile: KYC level and limits (`GET /v1/wallet/limits`), security, mode switch and sign out.
+/// Profile: KYC level, limits and how much of them is used (`GET /v1/wallet/limits`), security, mode
+/// switch and sign out.
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
@@ -89,11 +92,21 @@ class ProfileScreen extends StatelessWidget {
               ],
             ]),
           ),
+          const SectionHeader('Limit usage'),
+          LimitsUsageCard(limits: l),
           const SectionHeader('Account'),
           AppCard(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
             child: Column(children: [
-              NavRow(icon: Icons.notifications_none_rounded, tone: Tone.lemon, title: 'Notifications', onTap: () => push(context, const NotificationsScreen(businessMode: false))),
+              NavRow(
+                icon: Icons.notifications_none_rounded,
+                tone: Tone.lemon,
+                title: 'Notifications',
+                trailing: context.watch<NotificationCenter>().unread > 0
+                    ? Row(mainAxisSize: MainAxisSize.min, children: [CountBadge(context.watch<NotificationCenter>().unread, plus: context.watch<NotificationCenter>().unreadMayBeMore), const Icon(Icons.chevron_right_rounded, color: AppColors.faint)])
+                    : null,
+                onTap: () => push(context, const NotificationsScreen(businessMode: false)),
+              ),
               const Hairline(indent: 54),
               NavRow(icon: Icons.shield_outlined, title: 'Security', subtitle: 'Sessions, devices and events', onTap: () => push(context, const SecurityScreen())),
               const Hairline(indent: 54),

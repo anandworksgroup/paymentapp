@@ -9,9 +9,10 @@ import '../theme/kit.dart';
 
 /// Runs a high-risk action. If the API answers `step_up_required`, asks for the password (optionally
 /// gated by biometrics first), calls `POST /v1/auth/step-up`, then retries with the same
-/// Idempotency-Key. Returns null when the user cancels.
-Future<T?> withStepUp<T>(BuildContext context, Future<T> Function(String idempotencyKey) action) async {
-  final key = newUuid();
+/// Idempotency-Key. Returns null when the user cancels. Pass [idempotencyKey] to keep one key across
+/// several user retries of the same attempt (for example after a network failure).
+Future<T?> withStepUp<T>(BuildContext context, Future<T> Function(String idempotencyKey) action, {String? idempotencyKey}) async {
+  final key = idempotencyKey ?? newUuid();
   try {
     return await action(key);
   } on ApiException catch (e) {

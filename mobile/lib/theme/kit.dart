@@ -16,3 +16,4 @@ export 'widgets/layout.dart';
 export 'widgets/payment_card.dart';
 export 'widgets/pill_bar_chart.dart';
 export 'widgets/states.dart';
+export 'widgets/usage_bar.dart';

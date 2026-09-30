@@ -10,7 +10,9 @@ import '../../../shared/offline.dart';
 import '../../../theme/kit.dart';
 import '../../common/mode_switcher.dart';
 import '../../common/navigation.dart';
+import '../../common/notification_center.dart';
 import '../../common/notifications_screen.dart';
+import '../incidents/incident_banner.dart';
 import '../more/disputes_screen.dart';
 import '../more/payouts_screen.dart';
 import '../payments/payment_detail_screen.dart';
@@ -45,6 +47,7 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
   bool _chartLoading = false;
   bool _fromCache = false;
   Object? _error;
+  final _incidents = GlobalKey<IncidentBannerState>();
 
   @override
   void initState() {
@@ -105,6 +108,9 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
       _loading = true;
       _error = null;
     });
+    // Side panels refresh independently so their failures never block the dashboard.
+    _incidents.currentState?.reload();
+    context.read<NotificationCenter>().refresh();
     try {
       final results = await Future.wait([
         api.get('/v1/balance'),
@@ -181,6 +187,8 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthController>();
+    final notifications = context.watch<NotificationCenter>();
+    final unread = notifications.unread;
     final hasData = _balance != null || _dashboard != null;
     return AppPage(
       title: auth.org?.name ?? 'Business',
@@ -190,13 +198,17 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
       actions: [
         CircleIconButton(
           Icons.notifications_none_rounded,
+          key: const Key('notifications-bell'),
           tooltip: 'Notifications',
+          badgeCount: unread,
+          badgePlus: notifications.unreadMayBeMore,
           onPressed: () => push(context, const NotificationsScreen(businessMode: true)),
         ),
       ],
       children: [
         Wrap(spacing: 8, runSpacing: 8, children: [if (auth.canSwitchMode) const ModeChip(), const TestModeChip()]),
         const SizedBox(height: 14),
+        IncidentBanner(key: _incidents),
         if (!hasData && _loading) const LoadingView(),
         if (!hasData && !_loading && _error != null) ErrorView(error: _error!, onRetry: _reload),
         if (hasData) ...[

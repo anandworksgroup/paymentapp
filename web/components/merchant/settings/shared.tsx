@@ -11,6 +11,8 @@ const ITEMS = [
   { href: "/settings/payout-accounts", label: "Payout accounts", perm: "payouts.read" },
   { href: "/settings/security", label: "Security" },
   { href: "/settings/go-live", label: "Go live", perm: "team.read" },
+  { href: "/settings/domains", label: "Domains", perm: "org.manage" },
+  { href: "/settings/files", label: "Files", perm: "compliance.read" },
 ];
 
 export function SettingsNav({ current }: { current: string }) {

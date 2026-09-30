@@ -159,7 +159,7 @@ public static class AccountEndpoints
             // scope=personal → wallet/account notices only; scope=org → organization notices only.
             if (req.Query["scope"] == "personal") q = q.Where(n => n.OrgId == null);
             else if (req.Query["scope"] == "org") q = q.Where(n => n.OrgId != null);
-            return new { @object = "list", data = await q.OrderByDescending(n => n.CreatedAt).Take(50).ToListAsync() };
+            return new { @object = "list", data = await q.OrderByDescending(n => n.CreatedAt).Take(50).ToListAsync(), unread_count = await q.CountAsync(n => !n.Read) };
         });
 
         var org = app.MapGroup("/v1").WithTags("Organization");

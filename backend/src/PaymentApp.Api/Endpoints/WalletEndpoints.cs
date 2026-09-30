@@ -107,9 +107,11 @@ public static class WalletEndpoints
             };
             return View(t, wallet.Id, counterparty);
         });
-        w.MapPost("/exchanges", async (ExchangeRequest r, RequestContext ctx, WalletService wallets) =>
+        w.MapPost("/exchanges", async (ExchangeRequest r, RequestContext ctx, WalletService wallets, Modules.Operations.FlagService flags) =>
         {
-            var t = await wallets.Exchange(ctx.RequireUser(), r.QuoteId);
+            var user = ctx.RequireUser();
+            await flags.Require("wallet_exchange", null);
+            var t = await wallets.Exchange(user, r.QuoteId);
             return Results.Json(View(t, t.SenderWalletId!, $"Exchange {t.SourceCurrency} → {t.DestinationCurrency}"), statusCode: 201);
         }).RequireRateLimiting("financial");
         w.MapGet("/bank_accounts", async (RequestContext ctx, AppDb db) =>

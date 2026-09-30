@@ -7,6 +7,8 @@ using PaymentApp.Api.Modules.Reports;
 
 namespace PaymentApp.Api.Endpoints;
 
+public record AdminFileLinkRequest(string? Reason);
+
 public record AffiliateRequest(string Name, string Email, string Code, string CommissionType, int? RateBps, long? FixedAmount, string? FixedCurrency, string? Duration, int? DurationMonths, int? HoldDays);
 public record BudgetRequest(string? EventName, long MonthlyLimit, string? Mode, string? Thresholds);
 public record ExperimentRequest(string Name, string PaymentLink, List<ExperimentVariant> Variants, string? Hypothesis);
@@ -48,13 +50,13 @@ public static class GrowthEndpoints
             res.Headers["Cache-Control"] = "no-store";
             return Results.File(content, f.ContentType, f.FileName);
         }).WithTags("Files");
-        app.MapPost("/v1/admin/files/{id}/link", async (string id, RequestContext ctx, AppDb db, FileService store, Uow uow) =>
+        app.MapPost("/v1/admin/files/{id}/link", async (string id, AdminFileLinkRequest? r, RequestContext ctx, AppDb db, FileService store, Uow uow) =>
         {
             ctx.RequireAdmin("admin.merchants.read");
             using var _ = db.Tenant.Elevate();
             var f = await db.Files.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("file");
             if (f.Purpose == "kyc_document") ctx.RequireAdmin("admin.pii.unmask");
-            db.DataAccessLogs.Add(new DataAccessLog { Id = Ids.New("dal"), CreatedAt = uow.Now, AdminUserId = ctx.ActorId, ObjectType = "file", ObjectId = f.Id, Action = "download_link", Fields = f.Purpose, Ip = ctx.Ip });
+            db.DataAccessLogs.Add(new DataAccessLog { Id = Ids.New("dal"), CreatedAt = uow.Now, AdminUserId = ctx.ActorId, ObjectType = "file", ObjectId = f.Id, Action = "download_link", Fields = f.Purpose, Reason = r?.Reason?.Trim(), Ip = ctx.Ip });
             await db.SaveChangesAsync();
             return await Link(f, store, uow);
         }).WithTags("Admin");
@@ -64,6 +66,7 @@ public static class GrowthEndpoints
             var q = db.Files.AsQueryable();
             if (req.Query["org"].FirstOrDefault() is { Length: > 0 } org) q = q.Where(f => f.OrgId == org);
             if (req.Query["user"].FirstOrDefault() is { Length: > 0 } user) q = q.Where(f => f.UserId == user);
+            if (req.Query["purpose"].FirstOrDefault() is { Length: > 0 } purpose) q = q.Where(f => f.Purpose == purpose);
             return await Paging.List(q, req);
         }).WithTags("Admin");
 
@@ -221,9 +224,9 @@ public static class GrowthEndpoints
         // ───────── Checkout experiments (§108) ─────────
         var exp = app.MapGroup("/v1/experiments").WithTags("Experiments");
         exp.MapGet("/", async (HttpRequest req, RequestContext ctx, AppDb db) => { ctx.RequireOrg("analytics.read"); return await Paging.List(db.Experiments, req); });
-        exp.MapPost("/", async (ExperimentRequest r, RequestContext ctx, AppDb db, Uow uow) =>
+        exp.MapPost("/", async (ExperimentRequest r, RequestContext ctx, AppDb db, Uow uow, Modules.Operations.FlagService flags) =>
         {
-            ctx.RequireOrg("checkout.write");
+            await flags.Require("experiments", ctx.RequireOrg("checkout.write"));
             var link = await db.PaymentLinks.FirstOrDefaultAsync(l => l.Id == r.PaymentLink) ?? throw ApiException.NotFound("payment link");
             if (r.Variants.Count is < 2 or > 5) throw ApiException.Invalid("An experiment needs 2-5 variants; the first is the control.");
             if (r.Variants.Select(v => v.Key).Distinct().Count() != r.Variants.Count || r.Variants.Any(v => string.IsNullOrWhiteSpace(v.Key) || v.Weight < 1))
@@ -248,9 +251,9 @@ public static class GrowthEndpoints
                 return e;
             }), statusCode: 201);
         });
-        exp.MapPost("/{id}/start", async (string id, RequestContext ctx, AppDb db, Uow uow) =>
+        exp.MapPost("/{id}/start", async (string id, RequestContext ctx, AppDb db, Uow uow, Modules.Operations.FlagService flags) =>
         {
-            ctx.RequireOrg("checkout.write");
+            await flags.Require("experiments", ctx.RequireOrg("checkout.write"));
             return await uow.Run(async () =>
             {
                 var e = await db.Experiments.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("experiment");

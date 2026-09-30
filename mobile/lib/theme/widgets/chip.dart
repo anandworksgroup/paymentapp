@@ -71,6 +71,7 @@ Tone toneForStatus(String? status) {
     case 'APPROVED':
     case 'DELIVERED':
     case 'ENABLED':
+    case 'RESOLVED':
       return Tone.sage;
     case 'PROCESSING':
     case 'PENDING':
@@ -92,6 +93,7 @@ Tone toneForStatus(String? status) {
     case 'REQUIRES_ACTION':
     case 'PARTIALLY_REFUNDED':
     case 'VERIFICATION_REQUIRED':
+    case 'AWAITING_MERCHANT':
       return Tone.peach;
     case 'FAILED':
     case 'CANCELLED':

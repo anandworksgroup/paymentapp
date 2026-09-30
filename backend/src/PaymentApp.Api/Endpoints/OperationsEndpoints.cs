@@ -18,7 +18,7 @@ public record TicketMessageRequest(string Body, bool Internal = false);
 public record TicketUpdateRequest(string? Status, string? AssignedTo, string? Priority);
 public record IncidentRequest(string Title, string Severity, string AffectedServices, string CustomerImpact, string Message);
 public record IncidentUpdateRequest(string Status, string Message);
-public record FlagRequest(string? Description, bool? Enabled, int? RolloutPercent, string? OrgIds, string? Countries, string? Environment);
+public record FlagRequest(string? Description, bool? Enabled, int? RolloutPercent, string? OrgIds, string? Countries, string? Environment, string? Reason);
 public record DomainRequest(string Hostname, string Purpose);
 public record SellerDecisionRequest(bool Approve, string Reason);
 
@@ -74,8 +74,10 @@ public static class OperationsEndpoints
             return await uow.Run(async () =>
             {
                 var s = await db.Sellers.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("seller");
+                if (s.Status != "pending_verification") throw ApiException.Conflict("invalid_state", $"Only sellers awaiting review can be decided; this one is {s.Status}.");
                 var before = s.Status;
                 s.Status = r.Approve ? "active" : "rejected";
+                if (r.Approve && s.ScreeningStatus == "potential_match") s.ScreeningStatus = "cleared_by_review";
                 s.DecisionReason = r.Reason;
                 uow.Transition("seller", s.Id, before, s.Status, s.OrgId, r.Reason);
                 uow.Audit(r.Approve ? "seller.approve" : "seller.reject", "seller", s.Id, reason: r.Reason, orgId: s.OrgId);
@@ -226,7 +228,7 @@ public static class OperationsEndpoints
                     t.Status = "awaiting_merchant";
                     db.Notifications.Add(new Notification { Id = Ids.New("ntf"), CreatedAt = uow.Now, OrgId = t.OrgId, Channel = "in_app", Recipient = $"org:{t.OrgId}", Template = "support_reply", Subject = $"Support replied: {t.Subject}", Body = r.Body.Length > 200 ? r.Body[..200] + "…" : r.Body, Category = "account", Status = "delivered", ObjectType = "support_ticket", ObjectId = t.Id });
                 }
-                t.AssignedTo ??= staff.Id;
+                if (!r.Internal) t.AssignedTo ??= staff.Id;
                 t.UpdatedAt = uow.Now;
                 uow.Audit("support.reply", "support_ticket", t.Id, after: new { r.Internal }, orgId: t.OrgId);
                 await Task.CompletedTask;
@@ -236,11 +238,16 @@ public static class OperationsEndpoints
         adminSup.MapPatch("/{id}", async (string id, TicketUpdateRequest r, RequestContext ctx, AppDb db, Uow uow) =>
         {
             ctx.RequireAdmin("admin.support");
+            if (r.Status is not (null or "open" or "awaiting_merchant" or "resolved" or "closed")) throw ApiException.Invalid("Unknown status.");
+            if (r.Priority is not (null or "normal" or "high" or "urgent")) throw ApiException.Invalid("priority must be normal, high or urgent.");
+            // assigned_to: a staff user id, "" to unassign, or omitted to leave it unchanged.
+            if (!string.IsNullOrEmpty(r.AssignedTo) && !await db.Users.AnyAsync(u => u.Id == r.AssignedTo && u.PlatformRole != null))
+                throw ApiException.Invalid("assigned_to must be a platform staff user.");
             return await uow.Run(async () =>
             {
                 var t = await db.SupportTickets.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("ticket");
-                if (r.Status is not (null or "open" or "awaiting_merchant" or "resolved" or "closed")) throw ApiException.Invalid("Unknown status.");
-                t.Status = r.Status ?? t.Status; t.AssignedTo = r.AssignedTo ?? t.AssignedTo; t.Priority = r.Priority ?? t.Priority;
+                t.Status = r.Status ?? t.Status; t.Priority = r.Priority ?? t.Priority;
+                if (r.AssignedTo != null) t.AssignedTo = r.AssignedTo.Length == 0 ? null : r.AssignedTo;
                 t.UpdatedAt = uow.Now;
                 uow.Audit("support.update", "support_ticket", t.Id, after: new { t.Status, t.AssignedTo, t.Priority }, orgId: t.OrgId);
                 await Task.CompletedTask;
@@ -256,7 +263,7 @@ public static class OperationsEndpoints
             return new
             {
                 @object = "status", overall = active.Any(i => i.Severity == "critical") ? "major_outage" : active.Count > 0 ? "degraded" : "operational",
-                incidents = active.Select(i => new { i.Id, i.Title, i.Severity, i.Status, affected = i.AffectedServicesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries), i.CustomerImpact, i.StartedAt }),
+                incidents = active.Select(i => new { i.Id, i.Title, i.Severity, i.Status, affected = i.AffectedServicesCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), i.CustomerImpact, i.StartedAt }),
                 payment_providers = providers,
             };
         }).WithTags("Public checkout");
@@ -273,9 +280,14 @@ public static class OperationsEndpoints
         {
             var staff = ctx.RequireAdmin("admin.incidents");
             if (r.Severity is not ("minor" or "major" or "critical")) throw ApiException.Invalid("severity must be minor, major or critical.");
+            // Everything here is shown publicly on the status page, so none of it may be blank.
+            var services = (r.AffectedServices ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if ((r.Title?.Trim().Length ?? 0) is < 5 or > 200) throw ApiException.Invalid("title must be 5-200 characters.");
+            if (services.Length == 0) throw ApiException.Invalid("List at least one affected service.");
+            if (string.IsNullOrWhiteSpace(r.CustomerImpact) || string.IsNullOrWhiteSpace(r.Message)) throw ApiException.Invalid("customer_impact and message are required.");
             return Results.Json(await uow.Run(async () =>
             {
-                var i = new Incident { Id = Ids.New("inc"), CreatedAt = uow.Now, Title = r.Title, Severity = r.Severity, AffectedServicesCsv = r.AffectedServices, CustomerImpact = r.CustomerImpact, StartedAt = uow.Now, CreatedBy = staff.Id };
+                var i = new Incident { Id = Ids.New("inc"), CreatedAt = uow.Now, Title = r.Title.Trim(), Severity = r.Severity, AffectedServicesCsv = string.Join(",", services), CustomerImpact = r.CustomerImpact.Trim(), StartedAt = uow.Now, CreatedBy = staff.Id };
                 db.Incidents.Add(i);
                 db.IncidentUpdates.Add(new IncidentUpdate { Id = Ids.New("incu"), CreatedAt = uow.Now, IncidentId = i.Id, Status = "investigating", Message = r.Message, AuthorId = staff.Id });
                 uow.Audit("incident.open", "incident", i.Id, after: new { r.Title, r.Severity });
@@ -287,9 +299,11 @@ public static class OperationsEndpoints
         {
             var staff = ctx.RequireAdmin("admin.incidents");
             if (r.Status is not ("investigating" or "identified" or "monitoring" or "resolved")) throw ApiException.Invalid("Unknown status.");
+            if (string.IsNullOrWhiteSpace(r.Message)) throw ApiException.Invalid("message is required.");
             return await uow.Run(async () =>
             {
                 var i = await db.Incidents.FirstOrDefaultAsync(x => x.Id == id) ?? throw ApiException.NotFound("incident");
+                if (i.Status == "resolved") throw ApiException.Conflict("incident_resolved", "This incident is resolved. Declare a new one if the problem is back.");
                 i.Status = r.Status;
                 if (r.Status == "resolved") i.ResolvedAt = uow.Now;
                 db.IncidentUpdates.Add(new IncidentUpdate { Id = Ids.New("incu"), CreatedAt = uow.Now, IncidentId = id, Status = r.Status, Message = r.Message, AuthorId = staff.Id });
@@ -301,7 +315,10 @@ public static class OperationsEndpoints
         app.MapGet("/v1/admin/incidents", async (RequestContext ctx, AppDb db) =>
         {
             ctx.RequireAdmin("admin.overview");
-            return new { @object = "list", data = await db.Incidents.OrderByDescending(i => i.StartedAt).Take(100).ToListAsync() };
+            var incidents = await db.Incidents.OrderByDescending(i => i.StartedAt).Take(100).ToListAsync();
+            var ids = incidents.Select(i => i.Id).ToList();
+            var updates = await db.IncidentUpdates.Where(u => ids.Contains(u.IncidentId)).OrderBy(u => u.CreatedAt).ToListAsync();
+            return new { @object = "list", data = incidents.Select(i => new { incident = i, updates = updates.Where(u => u.IncidentId == i.Id) }) };
         }).WithTags("Admin");
 
         // ───────── Feature flags (§119) ─────────
@@ -322,18 +339,34 @@ public static class OperationsEndpoints
             ctx.RequireAdmin("admin.config.manage");
             if (!System.Text.RegularExpressions.Regex.IsMatch(key, "^[a-z][a-z0-9_]{1,63}$")) throw ApiException.Invalid("key must be lowercase snake_case.");
             if (r.RolloutPercent is < 0 or > 100) throw ApiException.Invalid("rollout_percent must be 0-100.");
+            if (r.Environment is not (null or "*" or "Development" or "Staging" or "Production")) throw ApiException.Invalid("environment must be *, Development, Staging or Production.");
             return await uow.Run(async () =>
             {
                 var f = await db.FeatureFlags.FirstOrDefaultAsync(x => x.Key == key);
-                var before = f == null ? null : new { f.Enabled, f.RolloutPercent, f.OrgIdsCsv, f.CountriesCsv, f.Environment };
+                var before = f == null ? null : new { f.Description, f.Enabled, f.RolloutPercent, f.OrgIdsCsv, f.CountriesCsv, f.Environment };
                 if (f == null) { f = new FeatureFlag { Id = Ids.New("flag"), CreatedAt = uow.Now, Key = key }; db.FeatureFlags.Add(f); }
                 f.Description = r.Description ?? f.Description; f.Enabled = r.Enabled ?? f.Enabled; f.RolloutPercent = r.RolloutPercent ?? f.RolloutPercent;
                 f.OrgIdsCsv = r.OrgIds ?? f.OrgIdsCsv; f.CountriesCsv = r.Countries?.ToUpperInvariant() ?? f.CountriesCsv; f.Environment = r.Environment ?? f.Environment;
                 f.UpdatedAt = uow.Now;
-                uow.Audit("config.feature_flag", "feature_flag", f.Id, before, new { f.Enabled, f.RolloutPercent, f.OrgIdsCsv, f.CountriesCsv, f.Environment });
+                uow.Audit("config.feature_flag", "feature_flag", f.Id, before, new { f.Description, f.Enabled, f.RolloutPercent, f.OrgIdsCsv, f.CountriesCsv, f.Environment }, reason: r.Reason);
                 await Task.CompletedTask;
                 return f;
             });
+        }).WithTags("Admin");
+
+        app.MapDelete("/v1/admin/feature_flags/{key}", async (string key, HttpRequest req, RequestContext ctx, AppDb db, Uow uow) =>
+        {
+            ctx.RequireAdmin("admin.config.manage");
+            // Unknown flags don't gate anything, so deleting a flag the code checks would switch it on for everyone.
+            if (FlagService.CodeFlags.Contains(key)) throw ApiException.Conflict("flag_in_use", "This flag is checked by the platform. Disable it instead of deleting it.");
+            await uow.Run(async () =>
+            {
+                var f = await db.FeatureFlags.FirstOrDefaultAsync(x => x.Key == key) ?? throw ApiException.NotFound("feature flag");
+                db.FeatureFlags.Remove(f);
+                uow.Audit("config.feature_flag_delete", "feature_flag", f.Id, new { f.Key, f.Enabled, f.RolloutPercent }, null, reason: req.Query["reason"].FirstOrDefault());
+                await Task.CompletedTask;
+            });
+            return Results.NoContent();
         }).WithTags("Admin");
 
         // ───────── Custom domains (§176, §177) ─────────

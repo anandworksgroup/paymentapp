@@ -26,10 +26,12 @@ public class OperationsTests(ApiFactory f) : IClassFixture<ApiFactory>
     [Fact]
     public async Task Marketplace_splits_sales_claws_back_refunds_and_disputes_and_pays_sellers()
     {
-        var (merchant, _, _, priceId) = await Scenario.ApprovedMerchant(f, _http, "market@acme.test", "Market Co");
+        var (merchant, admin, _, priceId) = await Scenario.ApprovedMerchant(f, _http, "market@acme.test", "Market Co");
         var seller = await merchant.Post("/v1/sellers", new { name = "Sam Seller", email = "sam@seller.example", country = "US", currency = "USD", commission_bps = 1000 }, 201);
         Assert.Equal("active", seller["status"]!.GetValue<string>());
         var sellerId = seller["id"]!.GetValue<string>();
+        // Only sellers awaiting review can be decided by staff.
+        await admin.Post($"/v1/admin/sellers/{sellerId}/decision", new { approve = false, reason = "Changed my mind" }, 409);
 
         var p1 = await BuyFromSeller(merchant, priceId, sellerId, "m1@example.com");
         var p2 = await BuyFromSeller(merchant, priceId, sellerId, "m2@example.com");
@@ -92,8 +94,11 @@ public class OperationsTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal(64, closed["snapshot_sha256"]!.GetValue<string>().Length);
         await merchant.Post("/v1/accounting_periods", new { period = previous }, 409);
 
-        // New activity lands in the open month; the closed snapshot is unchanged.
+        // New activity lands in the open month — including accounts opened later (a new seller) — and the
+        // closed snapshot is unchanged.
         await Scenario.Buy(merchant, priceId, country: "US", email: "c2@example.com");
+        var seller = await merchant.Post("/v1/sellers", new { name = "Late Seller", email = "late@seller.example", country = "US", currency = "USD" }, 201);
+        await BuyFromSeller(merchant, priceId, seller["id"]!.GetValue<string>(), "c3@example.com");
         var verify = await merchant.Get($"/v1/accounting_periods/{closed["id"]}/verify");
         Assert.True(verify["unchanged"]!.GetValue<bool>(), verify.ToJsonString());
         await merchant.Post("/v1/accounting_periods", new { period = "2026-13" }, 400);
@@ -217,6 +222,12 @@ public class OperationsTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal(2, messages.Count);
         Assert.DoesNotContain(messages, m => m!["body"]!.GetValue<string>().Contains("Bank trace"));
         Assert.Equal(3, (await admin.Get($"/v1/admin/support/tickets/{ticket["id"]}"))["messages"]!.AsArray().Count);
+        await admin.Patch($"/v1/admin/support/tickets/{ticket["id"]}", new { priority = "bogus" }, 400);
+        await admin.Patch($"/v1/admin/support/tickets/{ticket["id"]}", new { assigned_to = "usr_nobody" }, 400);
+        Assert.NotNull((await admin.Get($"/v1/admin/support/tickets/{ticket["id"]}"))["ticket"]!["assigned_to"]);
+        var unassigned = await admin.Patch($"/v1/admin/support/tickets/{ticket["id"]}", new { assigned_to = "", priority = "urgent" });
+        Assert.Null(unassigned["assigned_to"]);
+        Assert.Equal("urgent", unassigned["priority"]!.GetValue<string>());
         Assert.True(f.WithDb(db => db.Notifications.Any(n => n.ObjectId == ticket["id"]!.GetValue<string>() && n.Template == "support_reply")));
 
         // Merchants only ever see their own tickets; merchants can't use the staff queue.
@@ -235,13 +246,17 @@ public class OperationsTests(ApiFactory f) : IClassFixture<ApiFactory>
         var anon = new Api(_http);
         Assert.Equal("operational", (await anon.Get("/v1/public/status"))["overall"]!.GetValue<string>());
 
-        var incident = await admin.Post("/v1/admin/incidents", new { title = "Card payments degraded", severity = "major", affected_services = "checkout,payments", customer_impact = "Some card payments fail", message = "Investigating elevated declines." }, 201);
+        // Everything is public, so blank incidents are refused.
+        await admin.Post("/v1/admin/incidents", new { title = "", severity = "minor", affected_services = "", customer_impact = "", message = "" }, 400);
+        var incident = await admin.Post("/v1/admin/incidents", new { title = "Card payments degraded", severity = "major", affected_services = "checkout, payments", customer_impact = "Some card payments fail", message = "Investigating elevated declines." }, 201);
         await merchant.Post("/v1/admin/incidents", new { title = "x", severity = "major", affected_services = "", customer_impact = "", message = "" }, 403);
         var status = await anon.Get("/v1/public/status");
         Assert.Equal("degraded", status["overall"]!.GetValue<string>());
         Assert.Equal(["checkout", "payments"], status["incidents"]!.AsArray()[0]!["affected"]!.AsArray().Select(a => a!.GetValue<string>()));
 
         await admin.Post($"/v1/admin/incidents/{incident["id"]}/updates", new { status = "resolved", message = "Provider recovered." });
+        await admin.Post($"/v1/admin/incidents/{incident["id"]}/updates", new { status = "monitoring", message = "Reopening" }, 409);
+        Assert.Equal(2, (await admin.Get("/v1/admin/incidents"))["data"]!.AsArray().Single(x => x!["incident"]!["id"]!.GetValue<string>() == incident["id"]!.GetValue<string>())!["updates"]!.AsArray().Count);
         Assert.Equal("operational", (await anon.Get("/v1/public/status"))["overall"]!.GetValue<string>());
         var banner = (await merchant.Get("/v1/incidents"))["data"]!.AsArray().Single()!;
         Assert.Equal(2, banner["updates"]!.AsArray().Count);
@@ -267,6 +282,10 @@ public class OperationsTests(ApiFactory f) : IClassFixture<ApiFactory>
         Assert.Equal(403, (int)copilot.Status);
         await merchant.Put("/v1/admin/feature_flags/copilot", new { enabled = true }, 403);
         await admin.Put("/v1/admin/feature_flags/Bad Key", new { enabled = true }, 400);
+        await admin.Put("/v1/admin/feature_flags/copilot", new { environment = "staging" }, 400);
+        Assert.Equal(409, (int)(await admin.Send(HttpMethod.Delete, "/v1/admin/feature_flags/marketplace")).Status);
+        await admin.Put("/v1/admin/feature_flags/beta_banner", new { description = "Temporary banner", enabled = true, reason = "Launch week" });
+        Assert.Equal(204, (int)(await admin.Send(HttpMethod.Delete, "/v1/admin/feature_flags/beta_banner?reason=done")).Status);
         Assert.True(f.WithDb(db => db.AuditLogs.Count(a => a.Action == "config.feature_flag") >= 3));
 
         await admin.Put("/v1/admin/feature_flags/marketplace", new { rollout_percent = 100, org_ids = "" });

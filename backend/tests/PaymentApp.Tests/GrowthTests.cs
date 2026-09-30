@@ -46,6 +46,10 @@ public class GrowthTests(ApiFactory f) : IClassFixture<ApiFactory>
         // Disguised or active content is refused regardless of the declared name.
         Assert.Equal(415, (await Upload(merchant, "/v1/files", Encoding.UTF8.GetBytes("<html><script>alert(1)</script></html>"), "doc.pdf", "kyb_document")).Status);
         Assert.Equal(415, (await Upload(merchant, "/v1/files", [0x4D, 0x5A, 0x90, 0x00, 0x03], "setup.pdf", "kyb_document")).Status);
+        // A CSV ending in a newline (as spreadsheets export it) is still a CSV.
+        var (csvStatus, csv) = await Upload(merchant, "/v1/files", Encoding.UTF8.GetBytes("name,amount\r\nfoo,1\r\nbar,2\r\n"), "export.csv", "kyb_document");
+        Assert.Equal(201, csvStatus);
+        Assert.Equal("text/csv", csv!["content_type"]!.GetValue<string>());
 
         var link = await merchant.Post($"/v1/files/{file["id"]}/link");
         var download = await _http.GetAsync(link["url"]!.GetValue<string>());

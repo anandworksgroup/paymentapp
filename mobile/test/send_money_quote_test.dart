@@ -35,7 +35,8 @@ class FakeApi implements Api {
   Future<dynamic> get(String path, {Map<String, String?>? query}) => _run(ApiCall('GET', path, query, null, null));
 
   @override
-  Future<dynamic> post(String path, {Object? body, String? idempotencyKey}) => _run(ApiCall('POST', path, null, body, idempotencyKey ?? newUuid()));
+  Future<dynamic> post(String path, {Object? body, String? idempotencyKey, Map<String, String?>? query}) =>
+      _run(ApiCall('POST', path, query, body, idempotencyKey ?? newUuid()));
 
   @override
   Future<dynamic> patch(String path, {Object? body}) => _run(ApiCall('PATCH', path, null, body, null));

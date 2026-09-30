@@ -6,7 +6,9 @@ import '../storage/secure_store.dart';
 import 'biometrics.dart';
 
 /// Optional biometric app lock plus an inactivity session timeout (URS §211).
-/// When locked, the user unlocks with biometrics (if enabled) or their password.
+/// When locked, the user unlocks with biometrics (if enabled) or their password, which is verified by the
+/// API. Wrong passwords are counted (persisted, so restarting the app does not reset them); after
+/// [maxPasswordAttempts] the lock screen signs the user out.
 class AppLock extends ChangeNotifier with WidgetsBindingObserver {
   AppLock({required this.store, required this.biometrics, required this.timeout, this.backgroundGrace = const Duration(seconds: 30)});
 
@@ -15,8 +17,11 @@ class AppLock extends ChangeNotifier with WidgetsBindingObserver {
   final Duration timeout;
   final Duration backgroundGrace;
 
+  static const maxPasswordAttempts = 5;
+
   bool enabled = false;
   bool biometricsAvailable = false;
+  int failedPasswordAttempts = 0;
   bool _locked = false;
   bool _active = false;
   DateTime _lastActivity = DateTime.now();
@@ -25,8 +30,11 @@ class AppLock extends ChangeNotifier with WidgetsBindingObserver {
 
   bool get locked => _locked;
 
+  int get attemptsLeft => (maxPasswordAttempts - failedPasswordAttempts).clamp(0, maxPasswordAttempts);
+
   Future<void> init() async {
     enabled = await store.read(StoreKeys.lockEnabled) == 'true';
+    failedPasswordAttempts = int.tryParse(await store.read(StoreKeys.unlockFailures) ?? '') ?? 0;
     biometricsAvailable = await biometrics.available();
     WidgetsBinding.instance.addObserver(this);
   }
@@ -63,7 +71,21 @@ class AppLock extends ChangeNotifier with WidgetsBindingObserver {
   void unlock() {
     _locked = false;
     _lastActivity = DateTime.now();
+    if (failedPasswordAttempts != 0) resetFailures();
     notifyListeners();
+  }
+
+  /// Records a password the API rejected. Returns the attempts left before sign-out.
+  Future<int> recordFailedPassword() async {
+    failedPasswordAttempts++;
+    await store.write(StoreKeys.unlockFailures, '$failedPasswordAttempts');
+    notifyListeners();
+    return attemptsLeft;
+  }
+
+  Future<void> resetFailures() async {
+    failedPasswordAttempts = 0;
+    await store.write(StoreKeys.unlockFailures, null);
   }
 
   Future<bool> unlockWithBiometrics() async {

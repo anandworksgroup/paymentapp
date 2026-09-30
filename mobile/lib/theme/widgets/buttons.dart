@@ -86,14 +86,19 @@ class SecondaryButton extends StatelessWidget {
   }
 }
 
-/// Round white icon button used for back/close and header actions.
+/// Round white icon button used for back/close and header actions. [badge] shows a peach dot;
+/// [badgeCount] (when > 0) shows a small peach count pill instead, e.g. unread notifications.
 class CircleIconButton extends StatelessWidget {
-  const CircleIconButton(this.icon, {super.key, this.onPressed, this.tooltip, this.badge = false, this.size = 44, this.dark = false});
+  const CircleIconButton(this.icon, {super.key, this.onPressed, this.tooltip, this.badge = false, this.badgeCount = 0, this.badgePlus = false, this.size = 44, this.dark = false});
 
   final IconData icon;
   final VoidCallback? onPressed;
   final String? tooltip;
   final bool badge;
+  final int badgeCount;
+
+  /// Shows "N+" when the count is a lower bound.
+  final bool badgePlus;
   final double size;
   final bool dark;
 
@@ -111,7 +116,7 @@ class CircleIconButton extends StatelessWidget {
           height: size,
           child: Stack(alignment: Alignment.center, children: [
             Icon(icon, size: size * 0.46, color: dark ? AppColors.surface : AppColors.text),
-            if (badge)
+            if (badge && badgeCount <= 0)
               Positioned(
                 top: size * 0.24,
                 right: size * 0.26,
@@ -121,7 +126,13 @@ class CircleIconButton extends StatelessWidget {
         ),
       ),
     );
-    return tooltip == null ? btn : Tooltip(message: tooltip!, child: btn);
+    final Widget withBadge = badgeCount <= 0
+        ? btn
+        : Stack(clipBehavior: Clip.none, children: [
+            btn,
+            Positioned(top: -4, right: -8, child: CountBadge(badgeCount, plus: badgePlus)),
+          ]);
+    return tooltip == null ? withBadge : Tooltip(message: badgeCount > 0 ? '$tooltip ($badgeCount unread)' : tooltip!, child: withBadge);
   }
 }
 
@@ -165,6 +176,35 @@ class QuickAction extends StatelessWidget {
             ),
           ]),
         ),
+      ),
+    );
+  }
+}
+
+/// Small peach count pill ("3", "99+") for unread badges.
+class CountBadge extends StatelessWidget {
+  const CountBadge(this.count, {super.key, this.plus = false});
+
+  final int count;
+  final bool plus;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = count > 99 ? '99+' : '$count${plus ? '+' : ''}';
+    return Semantics(
+      label: '$count unread',
+      excludeSemantics: true,
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 20),
+        height: 20,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.peach,
+          borderRadius: BorderRadius.circular(AppRadius.pill),
+          border: Border.all(color: AppColors.surface, width: 2),
+        ),
+        child: Text(text, style: AppType.caption(AppColors.peachInk).copyWith(fontWeight: FontWeight.w600, height: 1)),
       ),
     );
   }

@@ -5,18 +5,23 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, session } from "@/lib/api";
 import { NAV } from "@/lib/merchant/nav";
+import { useFeatures, useIncidents } from "@/lib/merchant/platform";
 import { cx } from "@/components/ui";
 import { useMerchant } from "./context";
 import { Icon } from "./icons";
 import { CommandPalette } from "./CommandPalette";
 import { CopilotPanel } from "./Copilot";
+import { IncidentBanner, RecentIncidents } from "./ops/IncidentBanner";
 
 export function Shell({ children }: { children: ReactNode }) {
   const [drawer, setDrawer] = useState(false);
   const [palette, setPalette] = useState(false);
   const [copilot, setCopilot] = useState(false);
   const pathname = usePathname();
-  const { live } = useMerchant();
+  const { live, org } = useMerchant();
+  const incidents = useIncidents();
+  const { on } = useFeatures(org.id);
+  const copilotOn = on("copilot");
 
   // ⌘K / Ctrl+K opens the command palette from anywhere.
   useEffect(() => {
@@ -61,21 +66,23 @@ export function Shell({ children }: { children: ReactNode }) {
         )}
 
         <div className="min-w-0 flex-1">
-          <Header onMenu={() => setDrawer(true)} onSearch={() => setPalette(true)} onCopilot={() => setCopilot(true)} />
+          <Header onMenu={() => setDrawer(true)} onSearch={() => setPalette(true)} onCopilot={copilotOn ? () => setCopilot(true) : undefined} statusSlot={<RecentIncidents recent={incidents.recent} />} />
           <main id="main" className="mx-auto w-full max-w-[1320px] px-4 pb-16 pt-2 sm:px-6 lg:px-8">
+            <IncidentBanner active={incidents.active} />
             {children}
           </main>
         </div>
       </div>
-      <CommandPalette open={palette} onClose={() => setPalette(false)} onCopilot={() => { setPalette(false); setCopilot(true); }} />
-      <CopilotPanel open={copilot} onClose={() => setCopilot(false)} />
+      <CommandPalette open={palette} onClose={() => setPalette(false)} onCopilot={copilotOn ? () => { setPalette(false); setCopilot(true); } : undefined} />
+      <CopilotPanel open={copilot && copilotOn} onClose={() => setCopilot(false)} />
     </div>
   );
 }
 
 function Sidebar({ onClose }: { onClose?: () => void }) {
   const pathname = usePathname();
-  const { can } = useMerchant();
+  const { can, org } = useMerchant();
+  const { on } = useFeatures(org.id);
   const isActive = (href: string) => (href === "/developers" || href === "/settings" ? pathname === href : pathname === href || pathname.startsWith(href + "/"));
   return (
     <nav aria-label="Main" className="glass flex min-h-full flex-col rounded-card p-3 shadow-card">
@@ -89,7 +96,7 @@ function Sidebar({ onClose }: { onClose?: () => void }) {
       </div>
       <div className="flex-1 space-y-4">
         {NAV.map((section, i) => {
-          const items = section.items.filter((it) => can(it.perm));
+          const items = section.items.filter((it) => can(it.perm) && on(it.flag));
           if (!items.length) return null;
           return (
             <div key={i}>
@@ -163,7 +170,7 @@ function OrgSwitcher() {
   );
 }
 
-function Header({ onMenu, onSearch, onCopilot }: { onMenu: () => void; onSearch: () => void; onCopilot: () => void }) {
+function Header({ onMenu, onSearch, onCopilot, statusSlot }: { onMenu: () => void; onSearch: () => void; onCopilot?: () => void; statusSlot?: ReactNode }) {
   const { can } = useMerchant();
   return (
     <header className="sticky top-0 z-30 bg-gradient-to-b from-bg via-bg/90 to-transparent px-4 pb-4 pt-4 sm:px-6 lg:px-8">
@@ -181,8 +188,9 @@ function Header({ onMenu, onSearch, onCopilot }: { onMenu: () => void; onSearch:
           <kbd className="ml-auto hidden rounded-md bg-surface-3 px-1.5 py-0.5 font-sans text-[11px] text-text-2 sm:inline">Ctrl K</kbd>
         </button>
         <div className="ml-auto flex items-center gap-2">
+          {statusSlot}
           <ModeToggle />
-          {can("copilot.use") && (
+          {can("copilot.use") && onCopilot && (
             <button onClick={onCopilot} className="flex h-10 items-center gap-2 rounded-full bg-ink px-3.5 text-[13px] font-medium text-white shadow-card transition hover:bg-ink-2" aria-label="Open copilot">
               <Icon name="sparkle" size={16} />
               <span className="hidden sm:inline">Copilot</span>

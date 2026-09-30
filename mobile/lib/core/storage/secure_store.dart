@@ -54,6 +54,7 @@ abstract final class StoreKeys {
   static const lockEnabled = 'app_lock_enabled';
   static const mode = 'app_mode';
   static const orgId = 'org_id';
+  static const unlockFailures = 'unlock_failures';
 }
 
 /// Stable per-install device id sent as X-Device-Id.

@@ -7,6 +7,7 @@ import { money } from "@/lib/format";
 import { ALL_NAV_ITEMS } from "@/lib/merchant/nav";
 import type { Customer, Payment } from "@/lib/merchant/types";
 import { useDebounced } from "@/lib/merchant/hooks";
+import { useFeatures } from "@/lib/merchant/platform";
 import { cx, Spinner, StatusChip } from "@/components/ui";
 import { useMerchant } from "./context";
 import { Icon } from "./icons";
@@ -14,14 +15,16 @@ import { Icon } from "./icons";
 type Item = { id: string; group: string; label: string; hint?: string; icon: string; run: () => void; chip?: string };
 
 /** ⌘K palette (§331): search customers and payments, jump to pages, run quick actions. */
-export function CommandPalette({ open, onClose, onCopilot }: { open: boolean; onClose: () => void; onCopilot: () => void }) {
+/** `onCopilot` is omitted when the copilot feature is off for this organization. */
+export function CommandPalette({ open, onClose, onCopilot }: { open: boolean; onClose: () => void; onCopilot?: () => void }) {
   if (!open) return null;
   return <PaletteBody onClose={onClose} onCopilot={onCopilot} />;
 }
 
-function PaletteBody({ onClose, onCopilot }: { onClose: () => void; onCopilot: () => void }) {
+function PaletteBody({ onClose, onCopilot }: { onClose: () => void; onCopilot?: () => void }) {
   const router = useRouter();
-  const { can } = useMerchant();
+  const { can, org } = useMerchant();
+  const { on } = useFeatures(org.id);
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
   const term = useDebounced(q.trim(), 220);
@@ -58,9 +61,9 @@ function PaletteBody({ onClose, onCopilot }: { onClose: () => void; onCopilot: (
       can("products.write") && { id: "a-product", group: "Quick actions", label: "Create product", icon: "box", run: () => go("/products?new=1") },
       can("developers.read") && { id: "a-logs", group: "Quick actions", label: "Open API logs", icon: "list", run: () => go("/developers/logs") },
       can("customers.write") && { id: "a-customer", group: "Quick actions", label: "Create customer", icon: "users", run: () => go("/customers?new=1") },
-      can("copilot.use") && { id: "a-copilot", group: "Quick actions", label: "Ask the copilot", icon: "sparkle", run: onCopilot },
+      can("copilot.use") && onCopilot && { id: "a-copilot", group: "Quick actions", label: "Ask the copilot", icon: "sparkle", run: onCopilot },
     ].filter(Boolean) as Item[];
-    const pages: Item[] = ALL_NAV_ITEMS.filter((n) => can(n.perm)).map((n) => ({
+    const pages: Item[] = ALL_NAV_ITEMS.filter((n) => can(n.perm) && on(n.flag)).map((n) => ({
       id: `p-${n.href}`, group: "Go to", label: n.label, hint: n.section, icon: n.icon, run: () => go(n.href),
     }));
     const match = (s: string) => !lower || s.toLowerCase().includes(lower);
@@ -74,7 +77,7 @@ function PaletteBody({ onClose, onCopilot }: { onClose: () => void; onCopilot: (
     return out;
     // go/onCopilot are stable enough for a transient dialog
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, remote, term, can]);
+  }, [q, remote, term, can, on, onCopilot]);
 
   const active = Math.min(cursor, Math.max(0, items.length - 1));
   const searching = term.length >= 2 && remote.term !== term;

@@ -73,7 +73,8 @@ public class FileService(AppDb db, Uow uow, FieldEncryptor encryptor, IFileScann
         if (b.Take(8192).Any(x => x == 0)) return null;
         var text = Encoding.UTF8.GetString(b.Take(8192).ToArray());
         if (text.Contains("<script", StringComparison.OrdinalIgnoreCase) || text.Contains("<html", StringComparison.OrdinalIgnoreCase)) return null;
-        return text.Split('\n').Take(5).All(l => l.Contains(',')) ? "text/csv" : "text/plain";
+        var lines = text.Split('\n').Select(l => l.TrimEnd('\r')).Where(l => l.Length > 0).Take(5).ToList();
+        return lines.Count > 0 && lines.All(l => l.Contains(',')) ? "text/csv" : "text/plain";
     }
 
     private static string SafeName(string name, string contentType)

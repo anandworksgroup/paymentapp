@@ -1,5 +1,8 @@
-/** Sidebar information architecture (URS §331). `perm` hides items the member cannot open. */
-export type NavItem = { href: string; label: string; icon: string; perm?: string };
+/**
+ * Sidebar information architecture (URS §331). `perm` hides items the member cannot open; `flag` hides
+ * items whose feature flag (GET /v1/features) is off for this organization.
+ */
+export type NavItem = { href: string; label: string; icon: string; perm?: string; flag?: string };
 export type NavSection = { label?: string; items: NavItem[] };
 
 export const NAV: NavSection[] = [
@@ -11,6 +14,7 @@ export const NAV: NavSection[] = [
       { href: "/orders", label: "Orders", icon: "bag", perm: "payments.read" },
       { href: "/payment-links", label: "Payment links", icon: "link", perm: "payments.read" },
       { href: "/checkout-sessions", label: "Checkout sessions", icon: "cart", perm: "payments.read" },
+      { href: "/sellers", label: "Sellers", icon: "store", perm: "customers.read", flag: "marketplace" },
     ],
   },
   {
@@ -22,13 +26,22 @@ export const NAV: NavSection[] = [
       { href: "/credits", label: "Credits", icon: "coins", perm: "credits.read" },
     ],
   },
-  { items: [{ href: "/customers", label: "Customers", icon: "users", perm: "customers.read" }] },
+  {
+    label: "Customers",
+    items: [
+      { href: "/customers", label: "Customers", icon: "users", perm: "customers.read" },
+      { href: "/affiliates", label: "Affiliates", icon: "handshake", perm: "customers.read" },
+      { href: "/imports", label: "Imports", icon: "upload", perm: "customers.write" },
+    ],
+  },
   {
     label: "Catalog",
     items: [
       { href: "/products", label: "Products & prices", icon: "box", perm: "products.read" },
       { href: "/coupons", label: "Coupons", icon: "tag", perm: "products.read" },
       { href: "/meters", label: "Meters", icon: "gauge", perm: "usage.read" },
+      { href: "/brands", label: "Brands", icon: "palette", perm: "products.read" },
+      { href: "/experiments", label: "Experiments", icon: "flask", perm: "analytics.read", flag: "experiments" },
     ],
   },
   {
@@ -38,6 +51,8 @@ export const NAV: NavSection[] = [
       { href: "/payouts", label: "Payouts", icon: "bank", perm: "payouts.read" },
       { href: "/ledger", label: "Ledger", icon: "book", perm: "ledger.read" },
       { href: "/statements", label: "Statements", icon: "file", perm: "reports.read" },
+      { href: "/reports", label: "Reports", icon: "chart", perm: "reports.read" },
+      { href: "/close", label: "Month-end close", icon: "calendar", perm: "ledger.read" },
     ],
   },
   {
@@ -66,8 +81,11 @@ export const NAV: NavSection[] = [
       { href: "/settings/payout-accounts", label: "Payout accounts", icon: "bank", perm: "payouts.read" },
       { href: "/settings/security", label: "Security", icon: "lock" },
       { href: "/settings/go-live", label: "Go live", icon: "rocket", perm: "team.read" },
+      { href: "/settings/domains", label: "Domains", icon: "globe", perm: "org.manage", flag: "custom_domains" },
+      { href: "/settings/files", label: "Files", icon: "file", perm: "compliance.read" },
     ],
   },
+  { items: [{ href: "/support", label: "Support", icon: "help" }] },
 ];
 
 export const ALL_NAV_ITEMS = NAV.flatMap((s) => s.items.map((i) => ({ ...i, section: s.label })));

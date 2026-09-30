@@ -142,7 +142,9 @@ public class WalletService(AppDb db, Uow uow, LedgerService ledger, FxService fx
             throw new ApiException(400, "limit_exceeded", $"This exceeds your per-transaction limit of {Money.Format(limit.PerTransactionUsd, "USD")}. Verify further to raise it.");
         var day = uow.Now.AddDays(-1);
         var month = uow.Now.AddDays(-30);
-        var outgoing = await db.Transfers.Where(t => t.SenderWalletId == w.Id && t.Type == type && t.Status != "FAILED" && t.Status != "CANCELLED" && t.Status != "RETURNED" && t.CreatedAt >= month).ToListAsync();
+        // Funding has no sending wallet: it counts against the wallet that receives it.
+        var mine = type == "funding" ? db.Transfers.Where(t => t.RecipientWalletId == w.Id) : db.Transfers.Where(t => t.SenderWalletId == w.Id);
+        var outgoing = await mine.Where(t => t.Type == type && t.Status != "FAILED" && t.Status != "CANCELLED" && t.Status != "RETURNED" && t.CreatedAt >= month).ToListAsync();
         var dayUsd = outgoing.Where(t => t.CreatedAt >= day).Sum(t => FxTable.ToUsd(t.SourceAmount, t.SourceCurrency)) + usd;
         var monthUsd = outgoing.Sum(t => FxTable.ToUsd(t.SourceAmount, t.SourceCurrency)) + usd;
         if (dayUsd > limit.DailyUsd) throw new ApiException(400, "limit_exceeded", $"This exceeds your daily limit of {Money.Format(limit.DailyUsd, "USD")}.");

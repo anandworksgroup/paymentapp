@@ -4,11 +4,13 @@ import 'package:provider/provider.dart';
 import '../../../core/api/api.dart';
 import '../../../core/auth/auth_controller.dart';
 import '../../../core/cache/cache_store.dart';
+import '../../../core/flags/feature_flags.dart';
 import '../../../core/security/secure_screen.dart';
 import '../../../shared/offline.dart';
 import '../../../theme/kit.dart';
 import '../../common/mode_switcher.dart';
 import '../../common/navigation.dart';
+import '../../common/notification_center.dart';
 import '../../common/notifications_screen.dart';
 import '../activity/transfer_detail_screen.dart';
 import '../kyc/kyc_screen.dart';
@@ -71,7 +73,9 @@ class _WalletHomeScreenState extends State<WalletHomeScreen> {
 
   Future<void> _refresh() async {
     final w = context.read<WalletModel>();
-    await Future.wait([w.refresh(), _loadRecent()]);
+    final notifications = context.read<NotificationCenter>();
+    final flags = context.read<FeatureFlags>();
+    await Future.wait([w.refresh(), _loadRecent(), notifications.refresh(), flags.refresh()]);
   }
 
   Future<void> _open(Widget screen) async {
@@ -84,6 +88,9 @@ class _WalletHomeScreenState extends State<WalletHomeScreen> {
     final w = context.watch<WalletModel>();
     final auth = context.watch<AuthController>();
     final online = canWrite(context);
+    final exchangeOn = context.watch<FeatureFlags>().isOn(FeatureFlags.walletExchange);
+    final notifications = context.watch<NotificationCenter>();
+    final unread = notifications.unread;
     final List<Widget> children;
     if (!w.loaded && w.loading) {
       children = [const LoadingView()];
@@ -128,7 +135,10 @@ class _WalletHomeScreenState extends State<WalletHomeScreen> {
           Expanded(child: QuickAction(icon: Icons.add_rounded, label: 'Add money', highlight: true, onTap: online ? () => _open(const AddMoneyScreen()) : null)),
           Expanded(child: QuickAction(icon: Icons.north_east_rounded, label: 'Send', onTap: online ? () => widget.onOpenTab(1) : null)),
           Expanded(child: QuickAction(icon: Icons.qr_code_rounded, label: 'Receive', onTap: () => _open(const ReceiveScreen()))),
-          Expanded(child: QuickAction(icon: Icons.currency_exchange_rounded, label: 'Exchange', onTap: online ? () => _open(const ExchangeScreen()) : null)),
+          if (exchangeOn)
+            Expanded(
+              child: QuickAction(key: const Key('quick-exchange'), icon: Icons.currency_exchange_rounded, label: 'Exchange', onTap: online ? () => _open(const ExchangeScreen()) : null),
+            ),
           Expanded(child: QuickAction(icon: Icons.account_balance_outlined, label: 'Withdraw', onTap: online ? () => _open(const WithdrawScreen()) : null)),
         ]),
         SectionHeader('Recent activity', action: 'See all', onAction: () => widget.onOpenTab(2)),
@@ -145,7 +155,14 @@ class _WalletHomeScreenState extends State<WalletHomeScreen> {
         onRefresh: _refresh,
         banner: const OfflineBanner(),
         actions: [
-          CircleIconButton(Icons.notifications_none_rounded, tooltip: 'Notifications', onPressed: () => push(context, const NotificationsScreen(businessMode: false))),
+          CircleIconButton(
+            Icons.notifications_none_rounded,
+            key: const Key('notifications-bell'),
+            tooltip: 'Notifications',
+            badgeCount: unread,
+            badgePlus: notifications.unreadMayBeMore,
+            onPressed: () => push(context, const NotificationsScreen(businessMode: false)),
+          ),
         ],
         children: [
           Wrap(spacing: 8, runSpacing: 8, children: [

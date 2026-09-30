@@ -4,12 +4,14 @@ import 'package:provider/provider.dart';
 import 'core/api/api.dart';
 import 'core/auth/auth_controller.dart';
 import 'core/cache/cache_store.dart';
+import 'core/flags/feature_flags.dart';
 import 'core/offline/online_status.dart';
 import 'core/security/app_lock.dart';
 import 'core/security/biometrics.dart';
 import 'features/auth/lock_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/business/business_shell.dart';
+import 'features/common/notification_center.dart';
 import 'features/wallet/wallet_shell.dart';
 import 'theme/kit.dart';
 import 'theme/theme.dart';
@@ -38,16 +40,23 @@ class _PaymentAppState extends State<PaymentApp> {
   AuthStatus? _last;
   AppMode? _lastMode;
   final _navigator = GlobalKey<NavigatorState>();
+  late final FeatureFlags _flags;
+  late final NotificationCenter _notifications;
 
   @override
   void initState() {
     super.initState();
-    widget.services.auth.addListener(_onAuth);
+    final s = widget.services;
+    s.auth.addListener(_onAuth);
+    _flags = FeatureFlags(api: s.api, auth: s.auth, cache: s.cache);
+    _notifications = NotificationCenter(api: s.api, auth: s.auth, cache: s.cache);
   }
 
   @override
   void dispose() {
     widget.services.auth.removeListener(_onAuth);
+    _flags.dispose();
+    _notifications.dispose();
     super.dispose();
   }
 
@@ -65,6 +74,7 @@ class _PaymentAppState extends State<PaymentApp> {
       widget.services.lock.start(coldStart: _last == AuthStatus.loading);
     } else if (s == AuthStatus.signedOut) {
       widget.services.lock.stop();
+      widget.services.lock.resetFailures();
       _navigator.currentState?.popUntil((r) => r.isFirst);
     }
     _last = s;
@@ -81,6 +91,8 @@ class _PaymentAppState extends State<PaymentApp> {
         ChangeNotifierProvider<OnlineStatus>.value(value: s.online),
         ChangeNotifierProvider<AuthController>.value(value: s.auth),
         ChangeNotifierProvider<AppLock>.value(value: s.lock),
+        ChangeNotifierProvider<FeatureFlags>.value(value: _flags),
+        ChangeNotifierProvider<NotificationCenter>.value(value: _notifications),
       ],
       child: Listener(
         behavior: HitTestBehavior.translucent,

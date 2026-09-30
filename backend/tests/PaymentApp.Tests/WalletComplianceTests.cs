@@ -64,6 +64,8 @@ public class WalletComplianceTests(ApiFactory f) : IClassFixture<ApiFactory>
         await lowKyc.Post("/v1/wallet/fund", new { currency = "USD", amount = 90_000 });
         await lowKyc.Post("/v1/wallet/fund", new { currency = "USD", amount = 90_000 });
         await lowKyc.Post("/v1/wallet/fund", new { currency = "USD", amount = 120_000 }, 400); // over the tier-1 per-transaction limit
+        var overDaily = await lowKyc.Send(HttpMethod.Post, "/v1/wallet/fund", new { currency = "USD", amount = 30_000 }); // $1,800 funded today; the daily limit is $2,000
+        Assert.Equal("limit_exceeded", overDaily.Body!["error"]!["code"]!.GetValue<string>());
         var limited = await lowKyc.Send(HttpMethod.Post, "/v1/wallet/transfers", new { recipient = await Handle(bob), source_currency = "USD", amount = 150_000 });
         Assert.Equal("limit_exceeded", limited.Body!["error"]!["code"]!.GetValue<string>());
         AssertLedgerBalanced();

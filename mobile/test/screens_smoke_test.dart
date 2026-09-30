@@ -9,6 +9,7 @@ import 'package:paymentapp_mobile/core/api/api.dart';
 import 'package:paymentapp_mobile/core/api/http_api.dart';
 import 'package:paymentapp_mobile/core/auth/auth_controller.dart';
 import 'package:paymentapp_mobile/core/cache/cache_store.dart';
+import 'package:paymentapp_mobile/core/flags/feature_flags.dart';
 import 'package:paymentapp_mobile/core/offline/online_status.dart';
 import 'package:paymentapp_mobile/core/security/app_lock.dart';
 import 'package:paymentapp_mobile/core/security/biometrics.dart';
@@ -23,11 +24,14 @@ import 'package:paymentapp_mobile/features/business/more/disputes_screen.dart';
 import 'package:paymentapp_mobile/features/business/more/more_screen.dart';
 import 'package:paymentapp_mobile/features/business/more/payment_links_screen.dart';
 import 'package:paymentapp_mobile/features/business/more/payouts_screen.dart';
+import 'package:paymentapp_mobile/features/business/more/platform_screens.dart';
 import 'package:paymentapp_mobile/features/business/more/team_screen.dart';
 import 'package:paymentapp_mobile/features/business/payments/payment_detail_screen.dart';
 import 'package:paymentapp_mobile/features/business/payments/payments_screen.dart';
 import 'package:paymentapp_mobile/features/business/subscriptions/subscription_detail_screen.dart';
 import 'package:paymentapp_mobile/features/business/subscriptions/subscriptions_screen.dart';
+import 'package:paymentapp_mobile/features/business/support/support_screens.dart';
+import 'package:paymentapp_mobile/features/common/notification_center.dart';
 import 'package:paymentapp_mobile/features/common/notifications_screen.dart';
 import 'package:paymentapp_mobile/features/common/security_screen.dart';
 import 'package:paymentapp_mobile/features/common/settings_screen.dart';
@@ -63,11 +67,13 @@ dynamic Function(ApiCall) fixtureHandler(Map<String, dynamic> fx) => (c) {
     };
 
 class _Env {
-  _Env(this.api, this.auth, this.wallet, this.lock);
+  _Env(this.api, this.auth, this.wallet, this.lock, this.flags, this.notifications);
   final FakeApi api;
   final AuthController auth;
   final WalletModel wallet;
   final AppLock lock;
+  final FeatureFlags flags;
+  final NotificationCenter notifications;
 }
 
 Future<_Env> _env(Map<String, dynamic> fx) async {
@@ -78,7 +84,10 @@ Future<_Env> _env(Map<String, dynamic> fx) async {
   final wallet = WalletModel(api: api);
   if (fx.containsKey('/v1/wallet')) wallet.data = Json.from(fx['/v1/wallet'] as Map);
   final lock = AppLock(store: store, biometrics: Biometrics(), timeout: const Duration(minutes: 5));
-  return _Env(api, auth, wallet, lock);
+  final cache = MemoryCacheStore();
+  final flags = FeatureFlags(api: api, auth: auth, cache: cache);
+  final notifications = NotificationCenter(api: api, auth: auth, cache: cache);
+  return _Env(api, auth, wallet, lock, flags, notifications);
 }
 
 /// Layout overflows and other framework errors fail the test on their own (with full diagnostics);
@@ -98,6 +107,8 @@ Future<void> _pump(WidgetTester tester, _Env env, Widget screen) async {
       ChangeNotifierProvider<AuthController>.value(value: env.auth),
       ChangeNotifierProvider<AppLock>.value(value: env.lock),
       ChangeNotifierProvider<WalletModel>.value(value: env.wallet),
+      ChangeNotifierProvider<FeatureFlags>.value(value: env.flags),
+      ChangeNotifierProvider<NotificationCenter>.value(value: env.notifications),
     ],
     child: MaterialApp(theme: buildAppTheme(), home: screen),
   ));
@@ -137,6 +148,13 @@ void main() {
       'notifications': () => const NotificationsScreen(businessMode: true),
       'security': () => const SecurityScreen(),
       'settings': () => const SettingsScreen(),
+      'support tickets': () => const SupportTicketsScreen(),
+      'new ticket': () => const NewTicketScreen(),
+      'ticket thread': () => const TicketThreadScreen(id: 'tkt_x'),
+      'sellers': () => const SellersScreen(),
+      'domains': () => const DomainsScreen(),
+      'experiments': () => const ExperimentsScreen(),
+      'copilot': () => const CopilotScreen(),
     };
     for (final e in screens.entries) {
       testWidgets(e.key, (tester) async {

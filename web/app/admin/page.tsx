@@ -5,6 +5,7 @@ import { Amount, Card, Chip, PageHeader, PillChart, Stat, StatusChip, Button } f
 import { CardHeader } from "@/components/admin/card-header";
 import { useAdminQuery } from "@/components/admin/data";
 import { Loadable, Num, PageSkeleton } from "@/components/admin/kit";
+import { ActiveIncidentsCard } from "@/components/admin/ops";
 import { useAdmin } from "@/components/admin/session";
 import { Guard } from "@/components/admin/shell";
 import type { Overview } from "@/components/admin/types";
@@ -50,6 +51,7 @@ function OverviewBody() {
           const busiest = queue.reduce((m, x, i) => (x.value > queue[m].value ? i : m), 0);
           return (
             <div className="space-y-5">
+              <ActiveIncidentsCard />
               <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
                 <Card>
                   <CardHeader title="Money moved" subtitle="Converted to USD at reference rates for comparison only." />

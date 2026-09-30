@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { api, API_URL, ApiError, session } from "@/lib/api";
 import type { ListResponse, Organization, SearchResult, User, Wallet } from "./types";
 
-type Method = "GET" | "POST" | "PATCH" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 function url(path: string) {
   return `${API_URL}${path.startsWith("/v1") ? path : `/v1/admin${path}`}`;

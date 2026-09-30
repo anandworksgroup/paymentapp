@@ -8,7 +8,7 @@ abstract class Api {
 
   /// Every POST carries an Idempotency-Key. Pass the same [idempotencyKey] when retrying the same user
   /// action (for example after step-up) so the server can de-duplicate it.
-  Future<dynamic> post(String path, {Object? body, String? idempotencyKey});
+  Future<dynamic> post(String path, {Object? body, String? idempotencyKey, Map<String, String?>? query});
   Future<dynamic> patch(String path, {Object? body});
   Future<dynamic> delete(String path);
 }

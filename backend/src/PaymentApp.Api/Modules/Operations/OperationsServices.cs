@@ -93,11 +93,14 @@ public class PeriodCloseService(AppDb db, Uow uow, TreasuryService treasury, Led
         });
     }
 
-    /// <summary>Deterministic JSON of closing balances and statements as of the period end.</summary>
+    /// <summary>
+    /// Deterministic JSON of closing balances and statements as of the period end. Only accounts that existed
+    /// by then are included, so accounts opened later (a new seller, a new currency) can't alter a closed month.
+    /// </summary>
     private async Task<string> Snapshot(string orgId, bool livemode, string period)
     {
         var (start, end) = Bounds(period);
-        var accounts = await db.LedgerAccounts.Where(a => (a.OwnerType == "org" && a.OwnerId == orgId || a.OwnerType == "seller" && db.Sellers.IgnoreQueryFilters().Any(s => s.Id == a.OwnerId && s.OrgId == orgId)) && a.Livemode == livemode)
+        var accounts = await db.LedgerAccounts.Where(a => (a.OwnerType == "org" && a.OwnerId == orgId || a.OwnerType == "seller" && db.Sellers.IgnoreQueryFilters().Any(s => s.Id == a.OwnerId && s.OrgId == orgId)) && a.Livemode == livemode && a.CreatedAt < end)
             .OrderBy(a => a.OwnerType).ThenBy(a => a.OwnerId).ThenBy(a => a.Code).ThenBy(a => a.Currency).ToListAsync();
         var balances = new List<object>();
         foreach (var a in accounts) balances.Add(new { owner = a.OwnerType + ":" + a.OwnerId, a.Code, a.Currency, closing = await ledger.Balance(a, end.AddTicks(-1)) });
@@ -329,6 +332,9 @@ public class ImportService(AppDb db, Uow uow, CreditService credits)
 /// <summary>Feature flags (§119): environment, org allow-list, country and deterministic percentage rollout.</summary>
 public class FlagService(AppDb db, IWebHostEnvironment env)
 {
+    /// <summary>Flags the platform code checks; they can be disabled but not deleted.</summary>
+    public static readonly HashSet<string> CodeFlags = ["copilot", "marketplace", "experiments", "wallet_exchange", "custom_domains"];
+
     public async Task<bool> IsEnabled(string key, string? orgId)
     {
         var flag = await db.FeatureFlags.FirstOrDefaultAsync(f => f.Key == key);

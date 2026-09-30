@@ -94,8 +94,8 @@ class HttpApi implements Api {
       _send(() => _client.get(_uri(path, query), headers: _headers()));
 
   @override
-  Future<dynamic> post(String path, {Object? body, String? idempotencyKey}) => _send(() => _client.post(
-        _uri(path),
+  Future<dynamic> post(String path, {Object? body, String? idempotencyKey, Map<String, String?>? query}) => _send(() => _client.post(
+        _uri(path, query),
         headers: _headers(idempotencyKey: idempotencyKey ?? newUuid(), json: true),
         body: jsonEncode(body ?? const {}),
       ));

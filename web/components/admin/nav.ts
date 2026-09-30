@@ -24,8 +24,13 @@ export const NAV: NavItem[] = [
   { href: "/admin/ledger", label: "Ledger", icon: "ledger", perms: ["admin.ledger.read"] },
   { href: "/admin/reconciliation", label: "Reconciliation", icon: "recon", perms: ["admin.recon.read"], badge: "recon" },
   { href: "/admin/payouts", label: "Payouts", icon: "payouts", perms: ["admin.transactions.read"] },
+  { href: "/admin/support", label: "Support", icon: "support", perms: ["admin.support"] },
+  { href: "/admin/incidents", label: "Incidents", icon: "incidents", perms: ["admin.overview"] },
+  { href: "/admin/sellers", label: "Sellers", icon: "merchants", perms: ["admin.merchants.read"] },
+  { href: "/admin/files", label: "Files", icon: "files", perms: ["admin.merchants.read"] },
   { href: "/admin/providers", label: "Providers", icon: "providers", perms: ["admin.overview"] },
   { href: "/admin/configuration", label: "Configuration", icon: "config", perms: ["admin.overview"] },
+  { href: "/admin/feature-flags", label: "Feature flags", icon: "flags", perms: ["admin.overview"] },
   { href: "/admin/audit", label: "Audit logs", icon: "audit", perms: ["admin.audit.read"] },
   { href: "/admin/health", label: "System health", icon: "health", perms: ["admin.overview"] },
 ];
